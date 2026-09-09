@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  TENANT
+}
+
+enum PurchaseStatus {
+  PENDING
+  PAID
+  VENDED
+  FAILED
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  name         String
+  role         Role       @default(TENANT)
+  companyId    String?
+  company      Company?   @relation(fields: [companyId], references: [id])
+  meters       Meter[]
+  purchases    Purchase[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model Company {
+  id               String     @id @default(cuid())
+  name             String
+  stronBaseUrl     String
+  stronCompanyName String
+  stronUsername    String
+  stronPassword    String
+  nairaPerKwh      Float      @default(100)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  users            User[]
+  meters           Meter[]
+  purchases        Purchase[]
+}
+
+model Meter {
+  id          String     @id @default(cuid())
+  meterNumber String     @unique
+  label       String?
+  companyId   String
+  company     Company    @relation(fields: [companyId], references: [id])
+  userId      String?
+  user        User?      @relation(fields: [userId], references: [id])
+  purchases   Purchase[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Purchase {
+  id                String         @id @default(cuid())
+  userId            String
+  user              User           @relation(fields: [userId], references: [id])
+  meterId           String
+  meter             Meter          @relation(fields: [meterId], references: [id])
+  companyId         String
+  company           Company        @relation(fields: [companyId], references: [id])
+  kwhAmount         Float
+  nairaAmount       Float
+  paystackReference String         @unique
+  status            PurchaseStatus @default(PENDING)
+  stsPin            String?
+  stronPreview      String?
+  stronResponse     String?
+  errorMessage      String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  paidAt            DateTime?
+  vendedAt          DateTime?
+}
