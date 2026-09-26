@@ -4,10 +4,12 @@ import { randomBytes } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { initializeTransaction } from "@/lib/paystack";
+import { MIN_KWH, getSettings, getTariff, quoteForNaira } from "@/lib/pricing";
 
 const schema = z.object({
   meterId: z.string().min(1),
-  kwhAmount: z.number().positive().max(10000),
+  /** Naira the tenant wants to spend on energy; kWh and fee are computed server-side */
+  nairaAmount: z.number().positive().max(10_000_000),
 });
 
 export async function POST(req: Request) {
@@ -27,8 +29,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Meter not found" }, { status: 404 });
     }
 
-    const nairaAmount = Number((body.kwhAmount * meter.company.nairaPerKwh).toFixed(2));
-    const amountKobo = Math.round(nairaAmount * 100);
+    // Always price from StronPower at the moment of purchase, never from the client.
+    const [tariff, settings] = await Promise.all([
+      getTariff(meter.company, meter.meterNumber, { fresh: true }),
+      getSettings(),
+    ]);
+    const quote = quoteForNaira(body.nairaAmount, tariff, settings);
+    if (quote.kwh < MIN_KWH) {
+      return NextResponse.json(
+        { error: `Minimum purchase is ${MIN_KWH} kWh (₦${Math.ceil(MIN_KWH * tariff.unitPrice).toLocaleString()})` },
+        { status: 400 }
+      );
+    }
+    const amountKobo = Math.round(quote.total * 100);
     const reference = `rch_${randomBytes(12).toString("hex")}`;
 
     const purchase = await prisma.purchase.create({
@@ -36,8 +49,10 @@ export async function POST(req: Request) {
         userId: session.user.id,
         meterId: meter.id,
         companyId: meter.companyId,
-        kwhAmount: body.kwhAmount,
-        nairaAmount,
+        kwhAmount: quote.kwh,
+        nairaAmount: quote.energyAmount,
+        serviceFee: quote.serviceFee,
+        unitPrice: quote.unitPrice,
         paystackReference: reference,
         status: "PENDING",
       },
@@ -51,8 +66,7 @@ export async function POST(req: Request) {
         dryRun: true,
         purchaseId: purchase.id,
         reference,
-        nairaAmount,
-        kwhAmount: body.kwhAmount,
+        quote,
         authorization_url: `${appUrl}/dashboard?mockPay=${reference}`,
       });
     }
@@ -65,7 +79,8 @@ export async function POST(req: Request) {
       metadata: {
         purchaseId: purchase.id,
         meterId: meter.id,
-        kwhAmount: body.kwhAmount,
+        kwhAmount: quote.kwh,
+        serviceFee: quote.serviceFee,
       },
     });
 
@@ -73,8 +88,7 @@ export async function POST(req: Request) {
       purchaseId: purchase.id,
       reference: init.reference,
       authorization_url: init.authorization_url,
-      nairaAmount,
-      kwhAmount: body.kwhAmount,
+      quote,
     });
   } catch (err) {
     if (err instanceof z.ZodError) {

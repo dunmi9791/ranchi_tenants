@@ -5,16 +5,19 @@ import { LogoutButton } from "./LogoutButton";
 export function Nav({ user }: { user?: SessionUser | null }) {
   return (
     <header className="border-b border-slate-200 bg-white">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-3">
         <Link href="/" className="text-lg font-semibold text-emerald-700">
           Ranchi Tenants
         </Link>
-        <nav className="flex items-center gap-3 text-sm">
+        <nav className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           {user ? (
             <>
               <span className="hidden text-slate-500 sm:inline">{user.email}</span>
               <Link href="/dashboard" className="rounded-md px-2 py-1 hover:bg-slate-100">
                 Dashboard
+              </Link>
+              <Link href="/account/password" className="rounded-md px-2 py-1 hover:bg-slate-100">
+                Password
               </Link>
               {user.role === "ADMIN" && (
                 <>
@@ -23,6 +26,15 @@ export function Nav({ user }: { user?: SessionUser | null }) {
                   </Link>
                   <Link href="/admin/meters" className="rounded-md px-2 py-1 hover:bg-slate-100">
                     Meters
+                  </Link>
+                  <Link href="/admin/tenants" className="rounded-md px-2 py-1 hover:bg-slate-100">
+                    Tenants
+                  </Link>
+                  <Link href="/admin/purchases" className="rounded-md px-2 py-1 hover:bg-slate-100">
+                    Purchases
+                  </Link>
+                  <Link href="/admin/settings" className="rounded-md px-2 py-1 hover:bg-slate-100">
+                    Settings
                   </Link>
                 </>
               )}

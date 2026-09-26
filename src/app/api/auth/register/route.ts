@@ -3,6 +3,7 @@ import { z } from "zod";
 import { hashPassword } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
+import { isFormPost, readBody, toFormRedirect } from "@/lib/form-post";
 
 const schema = z.object({
   name: z.string().min(2),
@@ -12,8 +13,13 @@ const schema = z.object({
 });
 
 export async function POST(req: Request) {
+  const res = await register(req);
+  return isFormPost(req) ? toFormRedirect(res, "/dashboard", "/register") : res;
+}
+
+async function register(req: Request) {
   try {
-    const body = schema.parse(await req.json());
+    const body = schema.parse(await readBody(req));
     const email = body.email.toLowerCase();
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {

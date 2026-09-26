@@ -29,6 +29,16 @@ model User {
   company      Company?   @relation(fields: [companyId], references: [id])
   meters       Meter[]
   purchases    Purchase[]
+  leaseExpiryDate DateTime?
+  leaseNotes      String?
+  /// Manually paused by an admin (lease expiry pauses automatically, see lib/account.ts)
+  isPaused           Boolean   @default(false)
+  pausedAt           DateTime?
+  pausedReason       String?
+  /// Bumped on pause / password reset to invalidate existing session cookies
+  sessionVersion     Int       @default(0)
+  /// Set after an admin password reset; tenant must choose a new password
+  mustChangePassword Boolean   @default(false)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 }
@@ -70,7 +80,12 @@ model Purchase {
   companyId         String
   company           Company        @relation(fields: [companyId], references: [id])
   kwhAmount         Float
+  /// Energy cost in NGN — what StronPower records for the vend (kWh × unit price)
   nairaAmount       Float
+  /// Service fee in NGN added on top to cover Paystack charges
+  serviceFee        Float          @default(0)
+  /// StronPower NGN/kWh (incl. VAT) quoted at purchase time; null for legacy purchases
+  unitPrice         Float?
   paystackReference String         @unique
   status            PurchaseStatus @default(PENDING)
   stsPin            String?
@@ -80,5 +95,17 @@ model Purchase {
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
   paidAt            DateTime?
+  /// Set just before GenStoreVendingData is sent; a token may exist on StronPower after this
+  storeAttemptedAt  DateTime?
   vendedAt          DateTime?
+}
+
+/// Singleton (id = "default") app-wide settings, editable on /admin/settings
+model Settings {
+  id                String   @id @default("default")
+  serviceFeePercent Float    @default(1.5)
+  serviceFeeFlat    Float    @default(100)
+  /// Maximum service fee in NGN; null = no cap
+  serviceFeeCap     Float?   @default(2000)
+  updatedAt         DateTime @updatedAt
 }

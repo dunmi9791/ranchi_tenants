@@ -2,13 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Nav } from "@/components/Nav";
 
 export default function RegisterPage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Error passed back by the API when the form was submitted before hydration.
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("error");
+    if (fromUrl) setError(fromUrl);
+  }, []);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -43,7 +49,7 @@ export default function RegisterPage() {
         <p className="mt-1 text-sm text-slate-600">
           Optional: enter a meter number already created by your company admin.
         </p>
-        <form onSubmit={onSubmit} className="mt-6 space-y-4 rounded-xl border bg-white p-6 shadow-sm">
+        <form method="post" action="/api/auth/register" onSubmit={onSubmit} className="mt-6 space-y-4 rounded-xl border bg-white p-6 shadow-sm">
           <label className="block text-sm">
             <span className="font-medium">Full name</span>
             <input name="name" required className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2" />

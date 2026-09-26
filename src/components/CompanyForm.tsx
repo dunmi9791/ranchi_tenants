@@ -10,9 +10,10 @@ export function CompanyForm() {
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const form = e.currentTarget;
     setLoading(true);
     setError(null);
-    const fd = new FormData(e.currentTarget);
+    const fd = new FormData(form);
     const res = await fetch("/api/admin/companies", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -31,7 +32,7 @@ export function CompanyForm() {
       setError(data.error || "Failed");
       return;
     }
-    e.currentTarget.reset();
+    form.reset();
     router.refresh();
   }
 
@@ -45,7 +46,7 @@ export function CompanyForm() {
           ["stronCompanyName", "Stron Companyname", "text"],
           ["stronUsername", "Stron Username", "text"],
           ["stronPassword", "Stron Password", "password"],
-          ["nairaPerKwh", "Naira per kWh", "number"],
+          ["nairaPerKwh", "Dry-run price (₦/kWh)", "number"],
         ] as const
       ).map(([name, label, type]) => (
         <label key={name} className="block text-sm">

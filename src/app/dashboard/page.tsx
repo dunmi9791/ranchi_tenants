@@ -2,15 +2,40 @@ import { redirect } from "next/navigation";
 import { Nav } from "@/components/Nav";
 import { BuyForm } from "@/components/BuyForm";
 import { prisma } from "@/lib/prisma";
-import { getSession } from "@/lib/session";
+import { getSession, loginPath } from "@/lib/session";
+import { confirmPaymentAndFulfill } from "@/lib/payments";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ reference?: string }>;
+}) {
   const session = await getSession();
-  if (!session.user) redirect("/login");
+  if (!session.user) redirect(loginPath(session));
+  if (session.user.mustChangePassword) redirect("/account/password");
+
+  // Returning from Paystack checkout: verify the payment and vend the PIN
+  // here too, so it works even if the webhook never arrives.
+  const { reference } = await searchParams;
+  let paymentError: string | null = null;
+  if (reference) {
+    const owned = await prisma.purchase.findFirst({
+      where: { paystackReference: reference, userId: session.user.id },
+      select: { id: true },
+    });
+    if (owned) {
+      try {
+        await confirmPaymentAndFulfill(reference);
+      } catch (err) {
+        console.error("[Dashboard] payment confirmation failed", err);
+        paymentError = "We couldn't confirm your payment yet. Refresh in a moment.";
+      }
+    }
+  }
 
   const meters = await prisma.meter.findMany({
     where: { userId: session.user.id },
-    include: { company: { select: { name: true, nairaPerKwh: true } } },
+    include: { company: { select: { name: true } } },
     orderBy: { createdAt: "asc" },
   });
 
@@ -30,13 +55,19 @@ export default async function DashboardPage() {
           <p className="text-slate-600">Manage meters, buy kWh, and view STS PINs.</p>
         </div>
 
+        {paymentError && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            {paymentError}
+          </p>
+        )}
+
         <section className="grid gap-4 sm:grid-cols-2">
           {meters.map((m) => (
             <div key={m.id} className="rounded-xl border bg-white p-4 shadow-sm">
               <p className="text-xs uppercase text-slate-500">Meter</p>
               <p className="font-mono text-lg font-semibold">{m.meterNumber}</p>
               <p className="text-sm text-slate-600">
-                {m.label || "Unlabeled"} · {m.company.name} · ₦{m.company.nairaPerKwh}/kWh
+                {m.label || "Unlabeled"} · {m.company.name}
               </p>
             </div>
           ))}
@@ -76,7 +107,14 @@ export default async function DashboardPage() {
                     </td>
                     <td className="px-3 py-2 font-mono">{p.meter.meterNumber}</td>
                     <td className="px-3 py-2">{p.kwhAmount}</td>
-                    <td className="px-3 py-2">₦{p.nairaAmount.toLocaleString()}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      ₦{(p.nairaAmount + p.serviceFee).toLocaleString()}
+                      {p.serviceFee > 0 && (
+                        <span className="block text-xs text-slate-500">
+                          incl. ₦{p.serviceFee.toLocaleString()} fee
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <span
                         className={

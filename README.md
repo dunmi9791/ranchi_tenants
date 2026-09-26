@@ -53,11 +53,36 @@ Seed meter: `04161234567` (linked to tenant).
 
 1. `GET {base}/` → parse `__RequestVerificationToken`
 2. `POST {base}/` with `Companyname`, `Username`, `Password`, token (cookie jar)
-3. `POST {base}/en/Account/GenStepVendingUnitInfo` (preview)
-4. `POST {base}/en/Account/GenStoreVendingData` (live vend; skipped if `STRON_DRY_RUN=true`)
-5. PIN = first `^^` (or comma) segment that looks like an STS token
+   — success = redirect + `.ASPXAUTH` cookie
+3. `POST {base}/en/Account/GetStepVending` (`searchKey` = meter) → customer, tariff category, price
+4. `POST {base}/en/Account/GenStepVendingUnitInfo` (preview; ~46 `^^` fields)
+5. `POST {base}/en/Account/GenStoreVendingData` (live vend, built from the preview; skipped if `STRON_DRY_RUN=true`)
+6. PIN = the 20-digit STS token in the `token^^date` response
+
+This mirrors the sidebar **Unit** dialog of StronPower's web UI (the grid's "Vend by Unit" button
+sends `amount=NaN` on accounts without a VAT rate). All steps run in one session because
+StronPower expires idle sessions quickly.
 
 Each **Company** row stores its own `stronBaseUrl` + credentials.
+
+## Pricing & service fee
+
+- Tenants enter a **naira** amount. The app reads the meter's live tariff from StronPower
+  (`GetStepVending` → `PRICE` + `VAT`), sells whole **0.1 kWh** steps (rounded down), and charges
+  exactly `kWh × unit price` — the same figure StronPower records — plus a **service fee**.
+- The service fee is set on **/admin/settings** (percent, flat, cap). Enter Paystack's rate: the fee is
+  grossed up so that after Paystack's charge on the total you still receive the full electricity amount.
+- Before the final vend, the preview total from StronPower must equal what the tenant paid for energy;
+  if StronPower's price changed in between, the purchase is marked FAILED instead of vending.
+- `Company.nairaPerKwh` is only used as the price when `STRON_DRY_RUN=true`.
+
+## Failed / stuck purchases
+
+**/admin/purchases** lists recent purchases:
+- **Verify payment** (PENDING): asks Paystack; if paid, vends.
+- **Retry vend** (FAILED, paid): re-runs the StronPower vend. If the failure happened after the final
+  `GenStoreVendingData` request was sent, a token may already exist, so the admin must first confirm
+  they checked StronPower's vending records.
 
 ## Paystack
 

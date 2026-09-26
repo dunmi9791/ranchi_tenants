@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyPaystackSignature } from "@/lib/paystack";
 import { fulfillPurchase } from "@/lib/vend";
+import { confirmPaymentAndFulfill } from "@/lib/payments";
 
 export async function POST(req: Request) {
   const rawBody = await req.text();
@@ -25,20 +26,22 @@ export async function POST(req: Request) {
 
   if (event.event === "charge.success" && event.data?.reference) {
     const reference = event.data.reference;
-    const purchase = await prisma.purchase.findUnique({ where: { paystackReference: reference } });
-    if (!purchase) {
-      return NextResponse.json({ ok: true, note: "unknown reference" });
-    }
-    if (purchase.status === "VENDED") {
-      return NextResponse.json({ ok: true, note: "already vended" });
-    }
+    console.log(`[Webhook] charge.success for ref ${reference}`);
 
-    await prisma.purchase.update({
-      where: { id: purchase.id },
-      data: { status: "PAID", paidAt: new Date() },
-    });
-
-    await fulfillPurchase(purchase.id);
+    if (dry) {
+      // Dry-run: no Paystack key to verify against, so trust the event.
+      const claimed = await prisma.purchase.updateMany({
+        where: { paystackReference: reference, status: "PENDING" },
+        data: { status: "PAID", paidAt: new Date() },
+      });
+      if (claimed.count > 0) {
+        const purchase = await prisma.purchase.findUnique({ where: { paystackReference: reference } });
+        if (purchase) await fulfillPurchase(purchase.id);
+      }
+    } else {
+      const result = await confirmPaymentAndFulfill(reference);
+      return NextResponse.json(result);
+    }
   }
 
   return NextResponse.json({ ok: true });

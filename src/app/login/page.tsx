@@ -2,13 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Nav } from "@/components/Nav";
 
 export default function LoginPage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Error passed back by the API when the form was submitted before hydration.
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("error");
+    if (fromUrl) setError(fromUrl);
+  }, []);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -29,7 +35,7 @@ export default function LoginPage() {
       setError(data.error || "Login failed");
       return;
     }
-    router.push("/dashboard");
+    router.push(data.redirectTo || "/dashboard");
     router.refresh();
   }
 
@@ -41,7 +47,7 @@ export default function LoginPage() {
         <p className="mt-1 text-sm text-slate-600">
           Demo: tenant@ranchi.local / password123
         </p>
-        <form onSubmit={onSubmit} className="mt-6 space-y-4 rounded-xl border bg-white p-6 shadow-sm">
+        <form method="post" action="/api/auth/login" onSubmit={onSubmit} className="mt-6 space-y-4 rounded-xl border bg-white p-6 shadow-sm">
           <label className="block text-sm">
             <span className="font-medium">Email</span>
             <input

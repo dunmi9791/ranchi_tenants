@@ -75,18 +75,21 @@ export function parseStronSegments(raw: string): string[] {
   return [trimmed];
 }
 
+/** STS tokens are 20 digits; StronPower may group them with spaces or dashes. */
+export function isStsToken(value: string): boolean {
+  return /^\d{20}$/.test(value.replace(/[\s-]/g, ""));
+}
+
+/**
+ * Extract the STS token from a GenStoreVendingData response (`token^^date`).
+ * Returns null unless a segment is a real 20-digit token — never falls back to
+ * arbitrary text, so error messages can't be stored as a PIN.
+ */
 export function extractStsPin(raw: string): string | null {
-  const segments = parseStronSegments(raw);
-  if (segments.length === 0) return null;
-  // Prefer first segment that looks like an STS token (digits / spaces)
-  for (const seg of segments) {
-    const cleaned = seg.replace(/\s+/g, "");
-    if (/^\d{8,}$/.test(cleaned)) {
-      return seg.trim();
-    }
+  for (const seg of parseStronSegments(raw)) {
+    if (isStsToken(seg)) return seg.trim();
   }
-  // Fallback: first non-empty segment
-  return segments[0] ?? null;
+  return null;
 }
 
 function normalizeBaseUrl(base: string): string {
@@ -156,16 +159,13 @@ export async function stronLogin(creds: CompanyStronCreds): Promise<CookieJar> {
     body: body.toString(),
   });
 
-  // Heuristic: failed login often still shows the login form
-  if (
-    loginRes.text.includes('name="__RequestVerificationToken"') &&
-    (loginRes.text.toLowerCase().includes("invalid") ||
-      loginRes.text.toLowerCase().includes("login"))
-  ) {
-    // Not always fatal — some dashboards still embed a token. Require cookies.
-  }
-  if (jar.size === 0) {
-    throw new Error("StronPower: login produced no session cookies");
+  // The login page sets a __RequestVerificationToken cookie on the first GET,
+  // so "got some cookies" proves nothing. A real login redirects and issues
+  // the .ASPXAUTH forms-auth cookie.
+  if (!jar.has(".ASPXAUTH")) {
+    throw new Error(
+      `StronPower: login rejected (HTTP ${loginRes.status}) — check company name, username and password`
+    );
   }
 
   return jar;
@@ -177,86 +177,218 @@ export type VendingPreviewInput = {
   kwhAmount: number;
 };
 
-export async function genStepVendingUnitInfo(
+/** A row from StronPower's vending grid (GetStepVending). */
+export type StronMeterRow = {
+  CUST_ID: string;
+  METER_ID: string;
+  Categories: string;
+  SStation_ID: string;
+  UNIT: string;
+  PRICE: string;
+  /** VAT % */
+  VAT?: string;
+  TotalUnit: string;
+  METER_TYPE: string;
+};
+
+/**
+ * Fields of the GenStepVendingUnitInfo preview response (`^^`-separated),
+ * mapped from StronPower's own vending page. Only the ones we use are named.
+ */
+export const PREVIEW = {
+  tokenTime: 1,
+  units: 2,
+  salesStation: 6,
+  tranDisplay: 10,
+  totalPaid: 12,
+  vat: 26,
+  exciseDuty: 27,
+  netValue: 28,
+  paymentDebtValue: 34,
+  debtBalance: 35,
+  amountTmp: 36,
+  categories: 37,
+  exciseDutyInt: 38,
+  rate: 39,
+  tranNum: 40,
+  meterTypeInt: 41,
+  dailyCharges: 42,
+  dailyChargesDebtNew: 43,
+  reTotalUnit: 44,
+} as const;
+
+const PREVIEW_MIN_FIELDS = 45;
+
+function formatKwh(kwh: number): string {
+  // Match what the StronPower UI sends: "10", "10.5" — never "10.00" or exponent form.
+  return String(Number(kwh.toFixed(2)));
+}
+
+async function stronAjax(
   creds: CompanyStronCreds,
   jar: CookieJar,
-  input: VendingPreviewInput
+  path: string,
+  params: Record<string, string>
 ): Promise<string> {
   const base = normalizeBaseUrl(creds.stronBaseUrl);
-  const body = new URLSearchParams({
-    MeterNo: input.meterNumber,
-    Amount: String(input.kwhAmount),
-  });
-
-  // Many Stron deployments also accept these aliases
-  body.set("meterno", input.meterNumber);
-  body.set("amount", String(input.kwhAmount));
-
-  const res = await stronFetch(`${base}/en/Account/GenStepVendingUnitInfo`, jar, {
+  const res = await stronFetch(`${base}${path}`, jar, {
     method: "POST",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
       "X-Requested-With": "XMLHttpRequest",
-      Referer: `${base}/`,
+      Referer: `${base}/en/Home/Index`,
     },
-    body: body.toString(),
+    body: new URLSearchParams(params).toString(),
   });
-
+  const name = path.split("/").pop();
   if (res.status >= 400) {
-    throw new Error(`StronPower GenStepVendingUnitInfo HTTP ${res.status}: ${res.text.slice(0, 200)}`);
+    throw new Error(`StronPower ${name} HTTP ${res.status}: ${res.text.slice(0, 200)}`);
+  }
+  // An expired/invalid session is redirected to the login page (HTTP 200 HTML).
+  if (/name=["']Password["']/i.test(res.text) || /stylelogin\.css/i.test(res.text)) {
+    throw new Error(`StronPower ${name}: session was logged out`);
   }
   return res.text;
 }
 
-export async function genStoreVendingData(
+/** Look up the meter's customer/tariff row, as the vending grid does. */
+export async function getMeterRow(
   creds: CompanyStronCreds,
   jar: CookieJar,
-  input: VendingPreviewInput & { previewRaw?: string }
-): Promise<string> {
-  if (process.env.STRON_DRY_RUN === "true") {
-    // Deterministic dry-run PIN for tests / staging
-    const fakePin = `DRYRUN${String(Math.floor(input.kwhAmount * 100)).padStart(12, "0")}`.slice(0, 20);
-    return `${fakePin}^^OK^^${input.meterNumber}^^${input.kwhAmount}`;
-  }
-
-  const base = normalizeBaseUrl(creds.stronBaseUrl);
-  const body = new URLSearchParams({
-    MeterNo: input.meterNumber,
-    Amount: String(input.kwhAmount),
+  meterNumber: string
+): Promise<StronMeterRow> {
+  const text = await stronAjax(creds, jar, "/en/Account/GetStepVending", {
+    page: "1",
+    rows: "50",
+    searchKey: meterNumber,
   });
-  body.set("meterno", input.meterNumber);
-  body.set("amount", String(input.kwhAmount));
-  if (input.previewRaw) {
-    body.set("PreviewData", input.previewRaw);
+  let rows: StronMeterRow[];
+  try {
+    rows = (JSON.parse(text) as { rows?: StronMeterRow[] }).rows ?? [];
+  } catch {
+    throw new Error(`StronPower GetStepVending: unexpected response: ${text.slice(0, 200)}`);
   }
+  const row = rows.find((r) => r.METER_ID === meterNumber);
+  if (!row) throw new Error(`StronPower: meter ${meterNumber} not found for this company`);
+  return row;
+}
 
-  const res = await stronFetch(`${base}/en/Account/GenStoreVendingData`, jar, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "X-Requested-With": "XMLHttpRequest",
-      Referer: `${base}/`,
-    },
-    body: body.toString(),
-  });
+/** Build the preview (GenStepVendingUnitInfo) form, as the "Unit" vending dialog sends it. */
+export function buildPreviewParams(row: StronMeterRow, kwhAmount: number): Record<string, string> {
+  const kwh = formatKwh(kwhAmount);
+  return {
+    customerIdT: row.CUST_ID,
+    meterIdT: row.METER_ID,
+    priceT: `${row.Categories}^${row.TotalUnit}`,
+    amount: kwh,
+    amountTmp: `${kwh} ${row.UNIT}/${kwh} kWh`,
+    disCount: "",
+    debtRatio: "0",
+    sourceTmp: "",
+  };
+}
 
-  if (res.status >= 400) {
-    throw new Error(`StronPower GenStoreVendingData HTTP ${res.status}: ${res.text.slice(0, 200)}`);
+export function parsePreview(raw: string): string[] {
+  const f = raw.split("^^");
+  if (f.length < PREVIEW_MIN_FIELDS) {
+    throw new Error(
+      `StronPower preview: expected ${PREVIEW_MIN_FIELDS}+ fields, got ${f.length}: ${raw.slice(0, 200)}`
+    );
   }
-  return res.text;
+  return f;
+}
+
+/** Build the store (GenStoreVendingData) form from the preview, as "Confirm Payment" sends it. */
+export function buildStoreParams(
+  row: StronMeterRow,
+  kwhAmount: number,
+  f: string[]
+): Record<string, string> {
+  return {
+    TokenTime: f[PREVIEW.tokenTime],
+    DailyCharges: f[PREVIEW.dailyCharges],
+    DailyChargesDebtNew: f[PREVIEW.dailyChargesDebtNew],
+    meterTypeInt: f[PREVIEW.meterTypeInt],
+    varTranNum: f[PREVIEW.tranNum],
+    DebtBalance1: f[PREVIEW.debtBalance],
+    varPaymentDebtValue: f[PREVIEW.paymentDebtValue],
+    TranDisplay: f[PREVIEW.tranDisplay],
+    varNetValue: f[PREVIEW.netValue],
+    varExDuty: f[PREVIEW.exciseDuty],
+    excise_duty: f[PREVIEW.exciseDutyInt],
+    varVat: f[PREVIEW.vat],
+    Categories1: f[PREVIEW.categories],
+    newAmountTmp3: f[PREVIEW.amountTmp],
+    customerIdT: row.CUST_ID,
+    meterIdT: row.METER_ID,
+    priceT: `${f[PREVIEW.categories]}^${f[PREVIEW.reTotalUnit]}`,
+    rateT: f[PREVIEW.rate],
+    amount: formatKwh(kwhAmount),
+    amountTmp: f[PREVIEW.amountTmp],
+    payType: "Cash",
+    SStation_Id: f[PREVIEW.salesStation],
+    disCount: "",
+    debtRatio: "0",
+    sourceTmp: "",
+  };
 }
 
 /**
- * Full vend: login → preview → store. Returns raw store response + extracted PIN.
- * Never logs passwords.
+ * Full vend: login → meter lookup → preview → store, all in one session
+ * (StronPower expires idle sessions quickly). Never logs passwords.
  */
 export async function vendStsPin(
   creds: CompanyStronCreds,
-  input: VendingPreviewInput
-): Promise<{ preview: string; store: string; pin: string | null }> {
+  input: VendingPreviewInput,
+  opts: {
+    /** If set, refuse to store unless StronPower's preview total equals this (NGN). */
+    expectedTotal?: number;
+    /** Called right before the store request — after this a token may exist on StronPower. */
+    beforeStore?: (preview: string) => Promise<void>;
+  } = {}
+): Promise<{ preview: string; store: string; pin: string | null; totalPaid: string }> {
   const jar = await stronLogin(creds);
-  const preview = await genStepVendingUnitInfo(creds, jar, input);
-  const store = await genStoreVendingData(creds, jar, { ...input, previewRaw: preview });
-  const pin = extractStsPin(store);
-  return { preview, store, pin };
+  const row = await getMeterRow(creds, jar, input.meterNumber);
+
+  const preview = await stronAjax(
+    creds,
+    jar,
+    "/en/Account/GenStepVendingUnitInfo",
+    buildPreviewParams(row, input.kwhAmount)
+  );
+  const f = parsePreview(preview);
+
+  // Refuse to store unless the preview is for exactly what was paid for.
+  if (Number(f[PREVIEW.units]) !== Number(formatKwh(input.kwhAmount))) {
+    throw new Error(
+      `StronPower preview mismatch: asked for ${input.kwhAmount} kWh, preview says ${f[PREVIEW.units]}`
+    );
+  }
+
+  if (
+    opts.expectedTotal != null &&
+    Math.abs(Number(f[PREVIEW.totalPaid]) - opts.expectedTotal) > 0.01
+  ) {
+    throw new Error(
+      `StronPower price changed: preview total ₦${f[PREVIEW.totalPaid]} for ${f[PREVIEW.units]} kWh, tenant paid ₦${opts.expectedTotal}`
+    );
+  }
+
+  await opts.beforeStore?.(preview);
+
+  let store: string;
+  if (process.env.STRON_DRY_RUN === "true") {
+    // Deterministic 20-digit dry-run token (prefix 99); skips the live store call.
+    const fakePin = `99${String(Math.round(input.kwhAmount * 100)).padStart(18, "0")}`;
+    store = `${fakePin}^^${new Date().toISOString().slice(0, 19).replace("T", " ")}`;
+  } else {
+    store = await stronAjax(
+      creds,
+      jar,
+      "/en/Account/GenStoreVendingData",
+      buildStoreParams(row, input.kwhAmount, f)
+    );
+  }
+
+  return { preview, store, pin: extractStsPin(store), totalPaid: f[PREVIEW.totalPaid] };
 }

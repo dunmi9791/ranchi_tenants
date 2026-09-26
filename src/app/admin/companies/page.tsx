@@ -29,6 +29,8 @@ export default async function AdminCompaniesPage() {
         <h1 className="text-2xl font-bold">Companies</h1>
         <p className="text-sm text-slate-600">
           Each company has its own StronPower base URL and credentials (never sent to the browser).
+          Tenants are charged StronPower&apos;s live tariff for their meter; the dry-run price is only
+          used when <code>STRON_DRY_RUN=true</code>.
         </p>
         <CompanyForm />
         <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
@@ -38,7 +40,7 @@ export default async function AdminCompaniesPage() {
                 <th className="px-3 py-2">Name</th>
                 <th className="px-3 py-2">Stron base</th>
                 <th className="px-3 py-2">Company / user</th>
-                <th className="px-3 py-2">₦/kWh</th>
+                <th className="px-3 py-2" title="Only used when STRON_DRY_RUN=true; live prices come from StronPower">Dry-run ₦/kWh</th>
                 <th className="px-3 py-2">Meters</th>
               </tr>
             </thead>

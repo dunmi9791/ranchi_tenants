@@ -27,8 +27,65 @@ const schema = z.object({
   meterNumber: z.string().min(5),
   label: z.string().optional(),
   companyId: z.string().min(1),
-  userEmail: z.string().email().optional(),
+  userEmail: z.string().email().optional().or(z.literal("")),
 });
+
+const patchSchema = z.object({
+  id: z.string().min(1),
+  meterNumber: z.string().min(5).optional(),
+  label: z.string().optional(),
+  companyId: z.string().min(1).optional(),
+  userEmail: z.string().email().optional().or(z.literal("")),
+});
+
+export async function PATCH(req: Request) {
+  if (!(await assertAdmin())) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  try {
+    const body = patchSchema.parse(await req.json());
+    const existing = await prisma.meter.findUnique({ where: { id: body.id } });
+    if (!existing) {
+      return NextResponse.json({ error: "Meter not found" }, { status: 404 });
+    }
+
+    let userId: string | null | undefined = undefined;
+    if (body.userEmail !== undefined) {
+      if (body.userEmail === "") {
+        userId = null;
+      } else {
+        const user = await prisma.user.findUnique({ where: { email: body.userEmail.toLowerCase() } });
+        if (!user) {
+          return NextResponse.json({ error: "User email not found" }, { status: 404 });
+        }
+        userId = user.id;
+        // Ensure user is in the correct company
+        const targetCompanyId = body.companyId || existing.companyId;
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { companyId: targetCompanyId },
+        });
+      }
+    }
+
+    const meter = await prisma.meter.update({
+      where: { id: body.id },
+      data: {
+        meterNumber: body.meterNumber,
+        label: body.label,
+        companyId: body.companyId,
+        userId,
+      },
+    });
+    return NextResponse.json({ meter });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+    }
+    console.error(err);
+    return NextResponse.json({ error: "Update failed" }, { status: 500 });
+  }
+}
 
 export async function POST(req: Request) {
   if (!(await assertAdmin())) {
