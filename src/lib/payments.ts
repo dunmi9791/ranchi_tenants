@@ -1,6 +1,14 @@
 import { prisma } from "./prisma";
 import { verifyTransaction } from "./paystack";
 import { fulfillPurchase } from "./vend";
+import { RENT_REFERENCE_PREFIX, confirmRentPayment } from "./rent";
+
+/** Confirm any Paystack payment: rent payments by their "rnt_" prefix, otherwise electricity. */
+export async function confirmPayment(reference: string) {
+  return reference.startsWith(RENT_REFERENCE_PREFIX)
+    ? confirmRentPayment(reference)
+    : confirmPaymentAndFulfill(reference);
+}
 
 /**
  * Confirm a Paystack payment and vend the STS PIN exactly once.

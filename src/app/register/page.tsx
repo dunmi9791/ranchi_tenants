@@ -27,8 +27,8 @@ export default function RegisterPage() {
       body: JSON.stringify({
         name: fd.get("name"),
         email: fd.get("email"),
+        phone: String(fd.get("phone") || "") || undefined,
         password: fd.get("password"),
-        meterNumber: String(fd.get("meterNumber") || "") || undefined,
       }),
     });
     const data = await res.json();
@@ -47,7 +47,7 @@ export default function RegisterPage() {
       <main className="mx-auto max-w-md px-4 py-12">
         <h1 className="text-2xl font-bold">Create account</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Optional: enter a meter number already created by your company admin.
+          Your property manager links your flat and meter to your account when they add your lease.
         </p>
         <form method="post" action="/api/auth/register" onSubmit={onSubmit} className="mt-6 space-y-4 rounded-xl border bg-white p-6 shadow-sm">
           <label className="block text-sm">
@@ -59,12 +59,12 @@ export default function RegisterPage() {
             <input name="email" type="email" required className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2" />
           </label>
           <label className="block text-sm">
-            <span className="font-medium">Password</span>
-            <input name="password" type="password" minLength={6} required className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2" />
+            <span className="font-medium">Phone (optional, to get your token by SMS)</span>
+            <input name="phone" type="tel" placeholder="08012345678" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2" />
           </label>
           <label className="block text-sm">
-            <span className="font-medium">Meter number (optional)</span>
-            <input name="meterNumber" className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2" />
+            <span className="font-medium">Password</span>
+            <input name="password" type="password" minLength={6} required className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2" />
           </label>
           {error && <p className="text-sm text-red-600">{error}</p>}
           <button

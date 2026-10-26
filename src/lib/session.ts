@@ -23,7 +23,10 @@ export const sessionOptions: SessionOptions = {
   password: process.env.SESSION_SECRET || "complex_password_at_least_32_characters_long",
   cookieName: "ranchi_session",
   cookieOptions: {
-    secure: process.env.NODE_ENV === "production",
+    // Secure cookies need HTTPS. In production follow APP_URL, so a container served over
+    // plain http (localhost / LAN) can still log in; dev never uses Secure, as before.
+    secure:
+      process.env.NODE_ENV === "production" && !process.env.APP_URL?.startsWith("http://"),
     httpOnly: true,
     sameSite: "lax",
     maxAge: 60 * 60 * 24 * 7,
@@ -33,8 +36,8 @@ export const sessionOptions: SessionOptions = {
 const blockedReasons = new WeakMap<object, string>();
 
 /**
- * Load the session and re-check the account on every request, so pausing a tenant,
- * an expired lease, or a password reset takes effect immediately rather than when the
+ * Load the session and re-check the account on every request, so pausing a tenant
+ * or a password reset takes effect immediately rather than when the
  * 7-day cookie expires. A rejected session is logged out in memory for this request;
  * getBlockedReason() says why.
  */
@@ -51,7 +54,6 @@ export async function getSession() {
       companyId: true,
       isPaused: true,
       pausedReason: true,
-      leaseExpiryDate: true,
       sessionVersion: true,
       mustChangePassword: true,
     },
@@ -84,7 +86,7 @@ export async function getSession() {
   return session;
 }
 
-/** Why getSession() rejected an existing cookie (paused, lease expired, reset), if it did. */
+/** Why getSession() rejected an existing cookie (paused, reset), if it did. */
 export function getBlockedReason(session: object): string | null {
   return blockedReasons.get(session) ?? null;
 }

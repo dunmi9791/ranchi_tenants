@@ -1,4 +1,6 @@
+import type { Company, Meter, Purchase } from "@prisma/client";
 import { prisma } from "./prisma";
+import { notifyPurchaseOutcome } from "./notify";
 import { vendStsPin } from "./stronpower";
 
 /**
@@ -16,6 +18,13 @@ export async function fulfillPurchase(purchaseId: string) {
     return purchase;
   }
 
+  const settled = await vendAndRecord(purchase);
+  // Fire and forget: email/SMS must never hold up or break the Paystack webhook.
+  void notifyPurchaseOutcome(settled.id);
+  return settled;
+}
+
+async function vendAndRecord(purchase: Purchase & { company: Company; meter: Meter }) {
   const creds = {
     stronBaseUrl: purchase.company.stronBaseUrl,
     stronCompanyName: purchase.company.stronCompanyName,
@@ -28,12 +37,8 @@ export async function fulfillPurchase(purchaseId: string) {
       creds,
       { meterNumber: purchase.meter.meterNumber, kwhAmount: purchase.kwhAmount },
       {
-        // Purchases priced from StronPower must vend at exactly that price. Legacy purchases
-        // (unitPrice null, priced from the old per-company rate) vend their kWh as sold.
-        expectedTotal:
-          purchase.unitPrice != null && process.env.STRON_DRY_RUN !== "true"
-            ? purchase.nairaAmount
-            : undefined,
+        // Priced in the app (company ₦/kWh): StronPower only has to vend the kWh paid for;
+        // vendStsPin refuses if its preview is for different units.
         beforeStore: async (preview) => {
           await prisma.purchase.update({
             where: { id: purchase.id },

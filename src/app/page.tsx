@@ -32,8 +32,8 @@ export default async function HomePage() {
         <div className="mt-12 grid gap-6 sm:grid-cols-3">
           {[
             [
-              "1. Link your meter",
-              "Sign in, or register with your meter number. Your property manager sets your meter up first.",
+              "1. Sign in",
+              "Your property manager adds your lease, and your flat's meter appears on your dashboard.",
             ],
             [
               "2. Choose your amount",

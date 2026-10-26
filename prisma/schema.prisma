@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -20,27 +20,30 @@ enum PurchaseStatus {
 }
 
 model User {
-  id           String     @id @default(cuid())
-  email        String     @unique
-  passwordHash String
-  name         String
-  role         Role       @default(TENANT)
-  companyId    String?
-  company      Company?   @relation(fields: [companyId], references: [id])
-  meters       Meter[]
-  purchases    Purchase[]
-  leaseExpiryDate DateTime?
-  leaseNotes      String?
-  /// Manually paused by an admin (lease expiry pauses automatically, see lib/account.ts)
-  isPaused           Boolean   @default(false)
-  pausedAt           DateTime?
-  pausedReason       String?
+  id                   String        @id @default(cuid())
+  email                String        @unique
+  /// Mobile number for SMS notifications as entered (digits, optional leading +); see lib/notify/phone.ts
+  phone                String?
+  passwordHash         String
+  name                 String
+  role                 Role          @default(TENANT)
+  companyId            String?
+  company              Company?      @relation(fields: [companyId], references: [id])
+  purchases            Purchase[]
+  /// Leases held as tenant; a tenant can rent several units
+  leases               Lease[]
+  /// Manual (cash / transfer) rent payments this admin recorded
+  recordedRentPayments RentPayment[]
+  /// Manually paused by an admin; blocks login. An expired lease only stops vending on that unit's meters.
+  isPaused             Boolean       @default(false)
+  pausedAt             DateTime?
+  pausedReason         String?
   /// Bumped on pause / password reset to invalidate existing session cookies
-  sessionVersion     Int       @default(0)
+  sessionVersion       Int           @default(0)
   /// Set after an admin password reset; tenant must choose a new password
-  mustChangePassword Boolean   @default(false)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  mustChangePassword   Boolean       @default(false)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 }
 
 model Company {
@@ -56,6 +59,7 @@ model Company {
   users            User[]
   meters           Meter[]
   purchases        Purchase[]
+  properties       Property[]
 }
 
 model Meter {
@@ -64,11 +68,139 @@ model Meter {
   label       String?
   companyId   String
   company     Company    @relation(fields: [companyId], references: [id])
-  userId      String?
-  user        User?      @relation(fields: [userId], references: [id])
+  /// The unit the meter supplies; whoever holds the unit's current lease can buy for it
+  unitId      String?
+  unit        Unit?      @relation(fields: [unitId], references: [id])
   purchases   Purchase[]
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+
+  @@index([unitId])
+}
+
+/// A building or estate. Belongs to a company, whose StronPower account vends its meters.
+model Property {
+  id        String   @id @default(cuid())
+  name      String
+  address   String?
+  notes     String?
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  units     Unit[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+}
+
+enum RentFrequency {
+  MONTHLY
+  QUARTERLY
+  BIANNUAL
+  ANNUAL
+}
+
+/// A flat / shop / room. Occupancy is derived from its leases (see lib/leases.ts), never stored.
+model Unit {
+  id            String        @id @default(cuid())
+  name          String
+  propertyId    String
+  property      Property      @relation(fields: [propertyId], references: [id])
+  /// Rent suggested for a new lease on this unit (per rentFrequency period)
+  rentAmount    Float?
+  rentFrequency RentFrequency @default(ANNUAL)
+  notes         String?
+  meters        Meter[]
+  leases        Lease[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([propertyId])
+}
+
+/// Dates are calendar days stored as midnight UTC (from <input type="date">), interpreted in Lagos.
+model Lease {
+  id            String        @id @default(cuid())
+  unitId        String
+  unit          Unit          @relation(fields: [unitId], references: [id])
+  tenantId      String
+  tenant        User          @relation(fields: [tenantId], references: [id])
+  startDate     DateTime
+  /// Last day of the lease; null = rolling (open-ended)
+  endDate       DateTime?
+  /// Rent per period
+  rentAmount    Float
+  rentFrequency RentFrequency @default(ANNUAL)
+  depositAmount Float?
+  notes         String?
+  /// Last day of occupancy when the tenant left early or after expiry; ends the lease
+  moveOutDate   DateTime?
+  endReason     String?
+  /// The lease this one renews (same tenant, same unit, starting after it)
+  renewedFromId String?       @unique
+  renewedFrom   Lease?        @relation("LeaseRenewal", fields: [renewedFromId], references: [id])
+  renewal       Lease?        @relation("LeaseRenewal")
+  rentCharges   RentCharge[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([unitId])
+  @@index([tenantId])
+}
+
+/// Rent due for one period of a lease, created by syncRentCharges (lib/rent.ts)
+model RentCharge {
+  id          String        @id @default(cuid())
+  leaseId     String
+  lease       Lease         @relation(fields: [leaseId], references: [id], onDelete: Cascade)
+  periodStart DateTime
+  periodEnd   DateTime
+  /// Rent is paid in advance: due on the first day of the period
+  dueDate     DateTime
+  amount      Float
+  payments    RentPayment[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([leaseId, periodStart])
+  @@index([dueDate])
+}
+
+enum RentPaymentMethod {
+  PAYSTACK
+  CASH
+  TRANSFER
+  OTHER
+}
+
+enum RentPaymentStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+model RentPayment {
+  id                String            @id @default(cuid())
+  chargeId          String
+  charge            RentCharge        @relation(fields: [chargeId], references: [id])
+  /// NGN applied to the rent charge
+  amount            Float
+  /// Service fee added on top for Paystack payments
+  serviceFee        Float             @default(0)
+  method            RentPaymentMethod
+  status            RentPaymentStatus @default(PENDING)
+  paystackReference String?           @unique
+  /// Bank / receipt reference for manual payments
+  reference         String?
+  note              String?
+  errorMessage      String?
+  recordedById      String?
+  recordedBy        User?             @relation(fields: [recordedById], references: [id])
+  paidAt            DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([chargeId])
 }
 
 model Purchase {
@@ -102,10 +234,77 @@ model Purchase {
 
 /// Singleton (id = "default") app-wide settings, editable on /admin/settings
 model Settings {
-  id                String   @id @default("default")
-  serviceFeePercent Float    @default(1.5)
-  serviceFeeFlat    Float    @default(100)
+  id                String @id @default("default")
+  serviceFeePercent Float  @default(1.5)
+  serviceFeeFlat    Float  @default(100)
   /// Maximum service fee in NGN; null = no cap
-  serviceFeeCap     Float?   @default(2000)
-  updatedAt         DateTime @updatedAt
+  serviceFeeCap     Float? @default(2000)
+
+  // ---- Notifications (secrets are never sent to the browser) ----
+  emailEnabled  Boolean @default(false)
+  smtpHost      String?
+  smtpPort      Int     @default(587)
+  /// true = implicit TLS (port 465); false = STARTTLS when the server offers it
+  smtpSecure    Boolean @default(false)
+  smtpUser      String?
+  smtpPassword  String?
+  smtpFromEmail String?
+  smtpFromName  String? @default("Ranchi Tenants")
+
+  smsEnabled         Boolean @default(false)
+  /// termii | africastalking | twilio | http (see lib/notify/sms.ts)
+  smsProvider        String  @default("termii")
+  /// Termii / Africa's Talking API key, Twilio auth token, or {apiKey} for a custom gateway
+  smsApiKey          String?
+  /// Africa's Talking username or Twilio Account SID
+  smsUsername        String?
+  smsSenderId        String?
+  /// Provider base URL override, or the full URL template for a custom HTTP gateway
+  smsBaseUrl         String?
+  smsHttpMethod      String  @default("POST")
+  /// "json" or "form" body for a custom HTTP gateway
+  smsHttpContentType String  @default("json")
+  smsHttpBody        String?
+  /// Extra headers for a custom HTTP gateway, one "Name: value" per line
+  smsHttpHeaders     String?
+  /// Prefix for local numbers starting with 0 (Nigeria = 234)
+  smsCountryCode     String  @default("234")
+
+  /// Welcome message with login URL, email and temporary password when an admin creates a tenant
+  notifyTenantOnWelcome       Boolean @default(true)
+  /// New temporary password sent to the tenant when an admin resets it
+  notifyTenantOnPasswordReset Boolean @default(true)
+  notifyTenantOnVend          Boolean @default(true)
+  notifyTenantOnFailure       Boolean @default(true)
+  notifyAdminOnFailure        Boolean @default(true)
+  /// Comma-separated admin emails / phone numbers for failure alerts
+  adminAlertEmails            String?
+  adminAlertPhones            String?
+
+  updatedAt DateTime @updatedAt
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+}
+
+/// One row per email / SMS attempt; message bodies are not stored (they can contain STS tokens)
+model NotificationLog {
+  id         String              @id @default(cuid())
+  channel    NotificationChannel
+  event      String
+  recipient  String
+  subject    String?
+  status     NotificationStatus
+  error      String?
+  purchaseId String?
+  createdAt  DateTime            @default(now())
+
+  @@index([createdAt])
 }

@@ -1,7 +1,7 @@
-import { randomInt } from "crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { hashPassword } from "@/lib/auth";
+import { generateTempPassword, hashPassword } from "@/lib/auth";
+import { notifyTenantCredentials } from "@/lib/notify";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 
@@ -10,16 +10,10 @@ const schema = z.object({
   password: z.string().min(8).max(100).optional(),
 });
 
-// No 0/O, 1/l/I — easy to read out over the phone.
-const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-
-function tempPassword(length = 10) {
-  return Array.from({ length }, () => ALPHABET[randomInt(ALPHABET.length)]).join("");
-}
-
 /**
  * Admin resets a tenant's password. The tenant must choose a new one at next login,
- * and all their existing sessions end. The temporary password is returned once only.
+ * and all their existing sessions end. The temporary password is emailed / texted to the tenant
+ * when notifications are on, and returned once so the admin can share it otherwise.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();
@@ -32,10 +26,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
   }
 
-  const tenant = await prisma.user.findFirst({ where: { id, role: "TENANT" }, select: { id: true } });
+  const tenant = await prisma.user.findFirst({
+    where: { id, role: "TENANT" },
+    select: { id: true, name: true, email: true, phone: true },
+  });
   if (!tenant) return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
 
-  const password = parsed.data.password ?? tempPassword();
+  const password = parsed.data.password ?? generateTempPassword();
   await prisma.user.update({
     where: { id },
     data: {
@@ -45,5 +42,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     },
   });
   console.log(`[Admin] ${session.user.email} reset password for tenant ${id}`);
-  return NextResponse.json({ password });
+  const notified = await notifyTenantCredentials(
+    "password_reset",
+    tenant,
+    password,
+    process.env.APP_URL || new URL(req.url).origin
+  );
+  return NextResponse.json({ password, notified });
 }

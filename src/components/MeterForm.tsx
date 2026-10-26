@@ -3,21 +3,25 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
-export type MeterWithUser = {
+export type MeterRow = {
   id: string;
   meterNumber: string;
   label: string | null;
   companyId: string;
-  user?: { email: string } | null;
+  unitId: string | null;
 };
+
+export type UnitChoice = { id: string; label: string; companyId: string };
 
 export function MeterForm({
   companies,
+  units,
   editingMeter,
   onCancel,
 }: {
   companies: { id: string; name: string }[];
-  editingMeter?: MeterWithUser | null;
+  units: UnitChoice[];
+  editingMeter?: MeterRow | null;
   onCancel?: () => void;
 }) {
   const router = useRouter();
@@ -28,19 +32,21 @@ export function MeterForm({
   const [meterNumber, setMeterNumber] = useState("");
   const [label, setLabel] = useState("");
   const [companyId, setCompanyId] = useState("");
-  const [userEmail, setUserEmail] = useState("");
+  const [unitId, setUnitId] = useState("");
+  // A meter can only go in a unit of a property under its own company.
+  const unitChoices = units.filter((u) => u.companyId === companyId);
 
   useEffect(() => {
     if (editingMeter) {
       setMeterNumber(editingMeter.meterNumber);
       setLabel(editingMeter.label || "");
       setCompanyId(editingMeter.companyId);
-      setUserEmail(editingMeter.user?.email || "");
+      setUnitId(editingMeter.unitId || "");
     } else {
       setMeterNumber("");
       setLabel("");
       setCompanyId(companies[0]?.id || "");
-      setUserEmail("");
+      setUnitId("");
     }
   }, [editingMeter, companies]);
 
@@ -55,7 +61,7 @@ export function MeterForm({
       meterNumber,
       label: label || undefined,
       companyId,
-      userEmail: userEmail || "",
+      unitId: unitChoices.some((u) => u.id === unitId) ? unitId : "",
     };
 
     const res = await fetch("/api/admin/meters", {
@@ -73,7 +79,7 @@ export function MeterForm({
     if (!editingMeter) {
       setMeterNumber("");
       setLabel("");
-      setUserEmail("");
+      setUnitId("");
     }
     
     if (onCancel) onCancel();
@@ -119,14 +125,20 @@ export function MeterForm({
         </select>
       </label>
       <label className="block text-sm">
-        <span className="font-medium">Assign to user email (optional)</span>
-        <input
-          name="userEmail"
-          type="email"
-          value={userEmail}
-          onChange={(e) => setUserEmail(e.target.value)}
+        <span className="font-medium">Unit</span>
+        <select
+          name="unitId"
+          value={unitChoices.some((u) => u.id === unitId) ? unitId : ""}
+          onChange={(e) => setUnitId(e.target.value)}
           className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2"
-        />
+        >
+          <option value="">Not in a unit</option>
+          {unitChoices.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.label}
+            </option>
+          ))}
+        </select>
       </label>
       {error && <p className="sm:col-span-2 text-sm text-red-600">{error}</p>}
       <div className="sm:col-span-2 flex gap-2">

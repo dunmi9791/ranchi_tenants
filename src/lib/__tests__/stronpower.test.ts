@@ -5,6 +5,7 @@ import {
   createCookieJar,
   cookieHeader,
   buildPreviewParams,
+  buildCompactStoreParams,
   buildStoreParams,
   extractStsPin,
   parsePreview,
@@ -16,6 +17,14 @@ import {
 } from "../stronpower";
 
 const fixtures = join(__dirname, "../__fixtures__");
+
+// Captured from a StronPower version that answers the preview in a short "111111" form.
+const compactPreview =
+  "111111^^2026/10/6 23:45:50^^0.0^^PC-0002^^0.0^^0.0^^500.0^^1^^500.0^^0.0^^500.0^^Otunba Apartments";
+const compactRow = {
+  CUST_ID: "CTS-00030", METER_ID: "58101042172", SStation_ID: "Sat-00002", Categories: "Otunba 02",
+  UNIT: "NGN", VAT: 0, TotalUnit: "21.00 kWh", METER_TYPE: "Energy Meter",
+};
 
 describe("parseRequestVerificationToken", () => {
   it("extracts token from login HTML fixture", () => {
@@ -138,7 +147,7 @@ describe("vending request builders", () => {
   });
 
   it("builds the store form from the preview exactly as the StronPower UI sends it", () => {
-    expect(buildStoreParams(row, 10, parsePreview(preview))).toEqual({
+    expect(buildStoreParams(row, 10, parsePreview(preview).f)).toEqual({
       TokenTime: "2026/9/26 16:05:51",
       DailyCharges: "0",
       DailyChargesDebtNew: "0",
@@ -168,7 +177,26 @@ describe("vending request builders", () => {
   });
 
   it("rejects a short/empty preview (e.g. the NaN-amount failure)", () => {
-    expect(() => parsePreview("")).toThrow(/expected 45\+ fields/);
+    expect(() => parsePreview("")).toThrow(/unrecognised response/);
+    expect(() => parsePreview("999999^^x^^y")).toThrow(/unrecognised response/);
+  });
+
+  it("reads the compact (111111) preview some StronPower versions return", () => {
+    const p = parsePreview(compactPreview);
+    expect(p).toMatchObject({ format: "compact", units: "1", totalPaid: "500.0" });
+  });
+
+  it("builds the compact-version store form exactly as its StronPower UI sends it", () => {
+    expect(buildCompactStoreParams(compactRow, 1)).toEqual({
+      customerIdT: "CTS-00030",
+      meterIdT: "58101042172",
+      priceT: "Otunba 02^21.00 kWh",
+      amount: "1",
+      amountTmp: "0 NGN/1 kWh",
+      payType: "Cash",
+      SStation_Id: "",
+      disCount: "",
+    });
   });
 });
 
@@ -218,20 +246,11 @@ describe("vendStsPin safety checks", () => {
     const hits = fakeStron();
     const before: string[] = [];
     const r = await vendStsPin(creds, { meterNumber: "58103835532", kwhAmount: 10 }, {
-      expectedTotal: 8000,
       beforeStore: async () => { before.push("called"); },
     });
     expect(r.pin).toBe("36891427335219798175");
     expect(before).toEqual(["called"]);
     expect(hits).toContain("/en/Account/GenStoreVendingData");
-  });
-
-  it("refuses to store when StronPower's price differs from what was paid", async () => {
-    const hits = fakeStron();
-    await expect(
-      vendStsPin(creds, { meterNumber: "58103835532", kwhAmount: 10 }, { expectedTotal: 1050 })
-    ).rejects.toThrow(/price changed/);
-    expect(hits).not.toContain("/en/Account/GenStoreVendingData");
   });
 
   it("refuses to store when the preview is for different units", async () => {
@@ -240,6 +259,56 @@ describe("vendStsPin safety checks", () => {
       /preview mismatch/
     );
     expect(hits).not.toContain("/en/Account/GenStoreVendingData");
+  });
+
+  it("vends on the compact-preview version with its short store form", async () => {
+    const sent: Record<string, string> = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const path = new URL(url).pathname;
+        let body = "";
+        let cookies: string[] = [];
+        if (path === "/" && init?.method !== "POST") { body = loginHtml; cookies = ["__RequestVerificationToken=a"]; }
+        else if (path === "/") { cookies = [".ASPXAUTH=x"]; body = "ok"; }
+        else if (path.endsWith("GetStepVending")) body = JSON.stringify({ total: 1, rows: [compactRow] });
+        else if (path.endsWith("GenStepVendingUnitInfo")) body = compactPreview;
+        else if (path.endsWith("GenStoreVendingData")) throw new Error("wrong store endpoint");
+        else if (path.endsWith("GenStepUnitVending")) {
+          Object.assign(sent, Object.fromEntries(new URLSearchParams(String(init?.body))));
+          body = "6783 7095 8340 3463 6831^^2026/10/6 23:53:41^^1^^AC-00030^^Cash^^Otunba Apartments";
+        }
+        const res = new Response(body, { status: 200 });
+        Object.defineProperty(res.headers, "getSetCookie", { value: () => cookies });
+        return res;
+      })
+    );
+    const r = await vendStsPin(creds, { meterNumber: "58101042172", kwhAmount: 1 });
+    expect(r.pin).toBe("6783 7095 8340 3463 6831");
+    expect(sent).toEqual(buildCompactStoreParams(compactRow, 1));
+  });
+
+  it("refuses to store when a compact preview is for different units", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const path = new URL(url).pathname;
+        let body = "";
+        let cookies: string[] = [];
+        if (path === "/" && init?.method !== "POST") { body = loginHtml; cookies = ["__RequestVerificationToken=a"]; }
+        else if (path === "/") { cookies = [".ASPXAUTH=x"]; body = "ok"; }
+        else if (path.endsWith("GetStepVending")) body = JSON.stringify({ total: 1, rows: [compactRow] });
+        else if (path.endsWith("GenStepVendingUnitInfo")) body = compactPreview;
+        else if (path.endsWith("GenStoreVendingData")) throw new Error("store must not be called");
+        else if (path.endsWith("GenStepUnitVending")) throw new Error("store must not be called");
+        const res = new Response(body, { status: 200 });
+        Object.defineProperty(res.headers, "getSetCookie", { value: () => cookies });
+        return res;
+      })
+    );
+    await expect(vendStsPin(creds, { meterNumber: "58101042172", kwhAmount: 5 })).rejects.toThrow(
+      /preview mismatch/
+    );
   });
 
   it("treats a login-page response (expired session) as an error, not a PIN", async () => {

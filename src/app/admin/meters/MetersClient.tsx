@@ -2,27 +2,35 @@
 
 import { useState } from "react";
 import { Nav } from "@/components/Nav";
-import { MeterForm, MeterWithUser } from "@/components/MeterForm";
-import { useRouter } from "next/navigation";
+import { MeterForm, type MeterRow, type UnitChoice } from "@/components/MeterForm";
+import type { SessionUser } from "@/lib/session";
 
 export default function MetersClient({
   meters,
   companies,
+  units,
   user,
 }: {
-  meters: any[];
-  companies: any[];
-  user: any;
+  meters: (MeterRow & { companyName: string; unitLabel: string | null; tenant: { name: string; email: string } | null })[];
+  companies: { id: string; name: string }[];
+  units: UnitChoice[];
+  user: SessionUser;
 }) {
-  const [editingMeter, setEditingMeter] = useState<MeterWithUser | null>(null);
+  const [editingMeter, setEditingMeter] = useState<MeterRow | null>(null);
 
   return (
     <div>
       <Nav user={user} />
       <main className="mx-auto max-w-5xl space-y-8 px-4 py-8">
-        <h1 className="text-2xl font-bold">Meters</h1>
+        <div>
+          <h1 className="text-2xl font-bold">Meters</h1>
+          <p className="text-sm text-slate-600">
+            Place each meter in the unit it supplies. The tenant holding that unit&apos;s active lease can buy electricity for it.
+          </p>
+        </div>
         <MeterForm
           companies={companies}
+          units={units}
           editingMeter={editingMeter}
           onCancel={() => setEditingMeter(null)}
         />
@@ -33,7 +41,8 @@ export default function MetersClient({
                 <th className="px-3 py-2">Meter</th>
                 <th className="px-3 py-2">Label</th>
                 <th className="px-3 py-2">Company</th>
-                <th className="px-3 py-2">Tenant</th>
+                <th className="px-3 py-2">Unit</th>
+                <th className="px-3 py-2">Current tenant</th>
                 <th className="px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
@@ -42,15 +51,16 @@ export default function MetersClient({
                 <tr key={m.id} className="border-b last:border-0">
                   <td className="px-3 py-2 font-mono">{m.meterNumber}</td>
                   <td className="px-3 py-2">{m.label || "—"}</td>
-                  <td className="px-3 py-2">{m.company.name}</td>
+                  <td className="px-3 py-2">{m.companyName}</td>
+                  <td className="px-3 py-2">{m.unitLabel ?? <span className="text-slate-400">Not in a unit</span>}</td>
                   <td className="px-3 py-2">
-                    {m.user ? (
+                    {m.tenant ? (
                       <div>
-                        <div className="font-medium">{m.user.name}</div>
-                        <div className="text-xs text-slate-500">{m.user.email}</div>
+                        <div className="font-medium">{m.tenant.name}</div>
+                        <div className="text-xs text-slate-500">{m.tenant.email}</div>
                       </div>
                     ) : (
-                      "Unassigned"
+                      <span className="text-slate-400">{m.unitLabel ? "Vacant" : "—"}</span>
                     )}
                   </td>
                   <td className="px-3 py-2 text-right">

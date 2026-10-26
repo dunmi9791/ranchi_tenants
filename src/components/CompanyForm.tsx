@@ -46,7 +46,7 @@ export function CompanyForm() {
           ["stronCompanyName", "Stron Companyname", "text"],
           ["stronUsername", "Stron Username", "text"],
           ["stronPassword", "Stron Password", "password"],
-          ["nairaPerKwh", "Dry-run price (₦/kWh)", "number"],
+          ["nairaPerKwh", "Price (₦/kWh)", "number"],
         ] as const
       ).map(([name, label, type]) => (
         <label key={name} className="block text-sm">

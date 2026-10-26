@@ -184,9 +184,10 @@ export type StronMeterRow = {
   Categories: string;
   SStation_ID: string;
   UNIT: string;
-  PRICE: string;
-  /** VAT % */
-  VAT?: string;
+  /** Not returned by every StronPower version (e.g. the compact one below) */
+  PRICE?: string;
+  /** VAT % (a number on some versions) */
+  VAT?: string | number;
   TotalUnit: string;
   METER_TYPE: string;
 };
@@ -218,6 +219,23 @@ export const PREVIEW = {
 } as const;
 
 const PREVIEW_MIN_FIELDS = 45;
+
+/**
+ * Some StronPower versions answer the preview with a short form instead, which their own
+ * vending page also gets back before a successful store:
+ *   111111^^2026/10/6 23:45:50^^0.0^^PC-0002^^0.0^^0.0^^500.0^^1^^500.0^^0.0^^500.0^^Otunba Apartments
+ */
+const COMPACT_PREVIEW_CODE = "111111";
+const COMPACT_PREVIEW = { units: 7, totalPaid: 10 } as const;
+const COMPACT_PREVIEW_FIELDS = 12;
+
+export type ParsedPreview = {
+  /** "full": the 45+ field preview; "compact": the short 111111 form */
+  format: "full" | "compact";
+  f: string[];
+  units: string;
+  totalPaid: string;
+};
 
 function formatKwh(kwh: number): string {
   // Match what the StronPower UI sends: "10", "10.5" — never "10.00" or exponent form.
@@ -288,14 +306,22 @@ export function buildPreviewParams(row: StronMeterRow, kwhAmount: number): Recor
   };
 }
 
-export function parsePreview(raw: string): string[] {
-  const f = raw.split("^^");
-  if (f.length < PREVIEW_MIN_FIELDS) {
-    throw new Error(
-      `StronPower preview: expected ${PREVIEW_MIN_FIELDS}+ fields, got ${f.length}: ${raw.slice(0, 200)}`
-    );
+export function parsePreview(raw: string): ParsedPreview {
+  const f = raw.trim().split("^^");
+  if (f.length >= PREVIEW_MIN_FIELDS) {
+    return { format: "full", f, units: f[PREVIEW.units], totalPaid: f[PREVIEW.totalPaid] };
   }
-  return f;
+  if (f.length >= COMPACT_PREVIEW_FIELDS && f[0] === COMPACT_PREVIEW_CODE) {
+    return {
+      format: "compact",
+      f,
+      units: f[COMPACT_PREVIEW.units],
+      totalPaid: f[COMPACT_PREVIEW.totalPaid],
+    };
+  }
+  throw new Error(
+    `StronPower preview: unrecognised response (${f.length} fields): ${raw.slice(0, 200)}`
+  );
 }
 
 /** Build the store (GenStoreVendingData) form from the preview, as "Confirm Payment" sends it. */
@@ -334,6 +360,24 @@ export function buildStoreParams(
 }
 
 /**
+ * Build the store form for the compact-preview StronPower version, as its "Confirm" sends it.
+ * That version issues the token from GenStepUnitVending, not GenStoreVendingData.
+ */
+export function buildCompactStoreParams(row: StronMeterRow, kwhAmount: number): Record<string, string> {
+  const kwh = formatKwh(kwhAmount);
+  return {
+    customerIdT: row.CUST_ID,
+    meterIdT: row.METER_ID,
+    priceT: `${row.Categories}^${row.TotalUnit}`,
+    amount: kwh,
+    amountTmp: `0 ${row.UNIT}/${kwh} kWh`,
+    payType: "Cash",
+    SStation_Id: "",
+    disCount: "",
+  };
+}
+
+/**
  * Full vend: login → meter lookup → preview → store, all in one session
  * (StronPower expires idle sessions quickly). Never logs passwords.
  */
@@ -341,8 +385,6 @@ export async function vendStsPin(
   creds: CompanyStronCreds,
   input: VendingPreviewInput,
   opts: {
-    /** If set, refuse to store unless StronPower's preview total equals this (NGN). */
-    expectedTotal?: number;
     /** Called right before the store request — after this a token may exist on StronPower. */
     beforeStore?: (preview: string) => Promise<void>;
   } = {}
@@ -356,21 +398,12 @@ export async function vendStsPin(
     "/en/Account/GenStepVendingUnitInfo",
     buildPreviewParams(row, input.kwhAmount)
   );
-  const f = parsePreview(preview);
+  const p = parsePreview(preview);
 
   // Refuse to store unless the preview is for exactly what was paid for.
-  if (Number(f[PREVIEW.units]) !== Number(formatKwh(input.kwhAmount))) {
+  if (Number(p.units) !== Number(formatKwh(input.kwhAmount))) {
     throw new Error(
-      `StronPower preview mismatch: asked for ${input.kwhAmount} kWh, preview says ${f[PREVIEW.units]}`
-    );
-  }
-
-  if (
-    opts.expectedTotal != null &&
-    Math.abs(Number(f[PREVIEW.totalPaid]) - opts.expectedTotal) > 0.01
-  ) {
-    throw new Error(
-      `StronPower price changed: preview total ₦${f[PREVIEW.totalPaid]} for ${f[PREVIEW.units]} kWh, tenant paid ₦${opts.expectedTotal}`
+      `StronPower preview mismatch: asked for ${input.kwhAmount} kWh, preview says ${p.units}`
     );
   }
 
@@ -382,13 +415,11 @@ export async function vendStsPin(
     const fakePin = `99${String(Math.round(input.kwhAmount * 100)).padStart(18, "0")}`;
     store = `${fakePin}^^${new Date().toISOString().slice(0, 19).replace("T", " ")}`;
   } else {
-    store = await stronAjax(
-      creds,
-      jar,
-      "/en/Account/GenStoreVendingData",
-      buildStoreParams(row, input.kwhAmount, f)
-    );
+    store =
+      p.format === "full"
+        ? await stronAjax(creds, jar, "/en/Account/GenStoreVendingData", buildStoreParams(row, input.kwhAmount, p.f))
+        : await stronAjax(creds, jar, "/en/Account/GenStepUnitVending", buildCompactStoreParams(row, input.kwhAmount));
   }
 
-  return { preview, store, pin: extractStsPin(store), totalPaid: f[PREVIEW.totalPaid] };
+  return { preview, store, pin: extractStsPin(store), totalPaid: p.totalPaid };
 }

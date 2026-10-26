@@ -3,13 +3,18 @@ import { z } from "zod";
 import { hashPassword } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
+import { cleanPhone } from "@/lib/notify/phone";
 import { isFormPost, readBody, toFormRedirect } from "@/lib/form-post";
 
 const schema = z.object({
   name: z.string().min(2),
   email: z.string().email(),
   password: z.string().min(6),
-  meterNumber: z.string().min(5).optional(),
+  /** Optional mobile number for SMS token notifications */
+  phone: z
+    .string()
+    .optional()
+    .refine((v) => !v || cleanPhone(v), "Invalid phone number"),
 });
 
 export async function POST(req: Request) {
@@ -26,34 +31,17 @@ async function register(req: Request) {
       return NextResponse.json({ error: "Email already registered" }, { status: 409 });
     }
 
-    let companyId: string | null = null;
-    let meterId: string | null = null;
-
-    if (body.meterNumber) {
-      const meter = await prisma.meter.findUnique({ where: { meterNumber: body.meterNumber } });
-      if (!meter) {
-        return NextResponse.json({ error: "Meter not found. Ask admin to register it first." }, { status: 404 });
-      }
-      if (meter.userId) {
-        return NextResponse.json({ error: "Meter already linked to another user" }, { status: 409 });
-      }
-      companyId = meter.companyId;
-      meterId = meter.id;
-    }
-
+    // Meters come with a lease: the property manager adds the tenant's lease on a unit,
+    // and the unit's meters then show on their dashboard.
     const user = await prisma.user.create({
       data: {
         email,
         name: body.name,
+        phone: cleanPhone(body.phone),
         passwordHash: await hashPassword(body.password),
         role: "TENANT",
-        companyId,
       },
     });
-
-    if (meterId) {
-      await prisma.meter.update({ where: { id: meterId }, data: { userId: user.id } });
-    }
 
     const session = await getSession();
     session.user = {
@@ -70,7 +58,7 @@ async function register(req: Request) {
     });
   } catch (err) {
     if (err instanceof z.ZodError) {
-      return NextResponse.json({ error: "Invalid input" }, { status: 400 });
+      return NextResponse.json({ error: err.issues[0]?.message ?? "Invalid input" }, { status: 400 });
     }
     console.error(err);
     return NextResponse.json({ error: "Registration failed" }, { status: 500 });

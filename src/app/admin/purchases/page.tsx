@@ -82,6 +82,7 @@ export default async function AdminPurchasesPage({
   const session = await getSession();
   if (!session.user) redirect("/login");
   if (session.user.role !== "ADMIN") redirect("/dashboard");
+  if (session.user.mustChangePassword) redirect("/account/password");
 
   const f = parseFilters(await searchParams);
 
@@ -177,7 +178,7 @@ export default async function AdminPurchasesPage({
             sub={
               totals.owedCount > 0
                 ? `incl. ${ngn(totals.owedAmount)} not yet vended`
-                : "recorded on StronPower"
+                : "at company prices"
             }
           />
           <Tile label="Service fees" value={ngn(totals.fees)} />

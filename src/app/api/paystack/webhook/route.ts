@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyPaystackSignature } from "@/lib/paystack";
 import { fulfillPurchase } from "@/lib/vend";
-import { confirmPaymentAndFulfill } from "@/lib/payments";
+import { confirmPayment } from "@/lib/payments";
+import { RENT_REFERENCE_PREFIX, markRentPaid } from "@/lib/rent";
 
 export async function POST(req: Request) {
   const rawBody = await req.text();
@@ -28,7 +29,10 @@ export async function POST(req: Request) {
     const reference = event.data.reference;
     console.log(`[Webhook] charge.success for ref ${reference}`);
 
-    if (dry) {
+    if (dry && reference.startsWith(RENT_REFERENCE_PREFIX)) {
+      const payment = await prisma.rentPayment.findUnique({ where: { paystackReference: reference } });
+      if (payment) await markRentPaid(payment.id);
+    } else if (dry) {
       // Dry-run: no Paystack key to verify against, so trust the event.
       const claimed = await prisma.purchase.updateMany({
         where: { paystackReference: reference, status: "PENDING" },
@@ -39,7 +43,7 @@ export async function POST(req: Request) {
         if (purchase) await fulfillPurchase(purchase.id);
       }
     } else {
-      const result = await confirmPaymentAndFulfill(reference);
+      const result = await confirmPayment(reference);
       return NextResponse.json(result);
     }
   }

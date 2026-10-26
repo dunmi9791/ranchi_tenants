@@ -21,17 +21,29 @@ export function Nav({ user }: { user?: SessionUser | null }) {
               </Link>
               {user.role === "ADMIN" && (
                 <>
-                  <Link href="/admin/companies" className="rounded-md px-2 py-1 hover:bg-slate-100">
-                    Companies
+                  <Link href="/admin/properties" className="rounded-md px-2 py-1 hover:bg-slate-100">
+                    Properties
                   </Link>
-                  <Link href="/admin/meters" className="rounded-md px-2 py-1 hover:bg-slate-100">
-                    Meters
+                  <Link href="/admin/leases" className="rounded-md px-2 py-1 hover:bg-slate-100">
+                    Leases
+                  </Link>
+                  <Link href="/admin/rent" className="rounded-md px-2 py-1 hover:bg-slate-100">
+                    Rent
                   </Link>
                   <Link href="/admin/tenants" className="rounded-md px-2 py-1 hover:bg-slate-100">
                     Tenants
                   </Link>
+                  <Link href="/admin/meters" className="rounded-md px-2 py-1 hover:bg-slate-100">
+                    Meters
+                  </Link>
                   <Link href="/admin/purchases" className="rounded-md px-2 py-1 hover:bg-slate-100">
                     Purchases
+                  </Link>
+                  <Link href="/admin/companies" className="rounded-md px-2 py-1 hover:bg-slate-100">
+                    Companies
+                  </Link>
+                  <Link href="/admin/admins" className="rounded-md px-2 py-1 hover:bg-slate-100">
+                    Admins
                   </Link>
                   <Link href="/admin/settings" className="rounded-md px-2 py-1 hover:bg-slate-100">
                     Settings

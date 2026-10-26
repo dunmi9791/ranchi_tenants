@@ -1,57 +1,67 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Badge } from "@/components/Badge";
 import { Nav } from "@/components/Nav";
 import { TenantActions } from "@/components/TenantActions";
 import { TenantForm } from "@/components/TenantForm";
-import { getAccountStatus, leaseEndsAt } from "@/lib/account";
+import { daysLeft, effectiveEnd, fmtDay, lagosToday, leaseState } from "@/lib/leases";
 import { prisma } from "@/lib/prisma";
+import { chargeStatus, syncRentCharges } from "@/lib/rent";
 import { getSession } from "@/lib/session";
 
-const SOON_MS = 14 * 24 * 60 * 60 * 1000;
-
-// Lease dates are stored as midnight UTC of the calendar day; format in UTC to avoid off-by-one.
-const fmtDate = (d: Date) =>
-  d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
-
-function Badge({ tone, children }: { tone: "green" | "red" | "amber" | "slate"; children: React.ReactNode }) {
-  const tones = {
-    green: "bg-green-100 text-green-800",
-    red: "bg-red-100 text-red-800",
-    amber: "bg-amber-100 text-amber-800",
-    slate: "bg-slate-100 text-slate-700",
-  };
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${tones[tone]}`}>
-      {children}
-    </span>
-  );
-}
+const SOON_DAYS = 30;
+const ngn = (n: number) => `₦${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
 export default async function AdminTenantsPage() {
   const session = await getSession();
   if (!session.user) redirect("/login");
   if (session.user.role !== "ADMIN") redirect("/dashboard");
+  if (session.user.mustChangePassword) redirect("/account/password");
 
+  await syncRentCharges();
   const tenants = await prisma.user.findMany({
     where: { role: "TENANT" },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
-      role: true,
       name: true,
       email: true,
-      leaseExpiryDate: true,
-      leaseNotes: true,
+      phone: true,
       isPaused: true,
       pausedAt: true,
       pausedReason: true,
       mustChangePassword: true,
-      meters: { select: { id: true, meterNumber: true, label: true } },
+      leases: {
+        orderBy: { startDate: "desc" },
+        select: {
+          id: true,
+          startDate: true,
+          endDate: true,
+          moveOutDate: true,
+          renewal: { select: { id: true } },
+          unit: { select: { name: true, property: { select: { name: true } } } },
+          rentCharges: { select: { amount: true, dueDate: true, payments: { select: { amount: true, status: true } } } },
+        },
+      },
     },
   });
 
-  const now = new Date();
-  const counts = { active: 0, paused: 0, lease_expired: 0 };
-  for (const t of tenants) counts[getAccountStatus(t, now).state]++;
+  const today = lagosToday();
+  const rows = tenants.map((t) => {
+    const leases = t.leases.map((l) => ({ ...l, state: leaseState({ ...l, hasRenewal: !!l.renewal }, today) }));
+    // What to list: leases in force, about to start, or lapsed without a move-out.
+    const current = leases.filter((l) => l.state === "active" || l.state === "upcoming" || l.state === "expired");
+    const owed = t.leases
+      .flatMap((l) => l.rentCharges.map((c) => chargeStatus(c, today)))
+      .filter((c) => c.state === "overdue" || c.state === "due")
+      .reduce((s, c) => s + c.balance, 0);
+    return { t, current, hasActive: leases.some((l) => l.state === "active"), owed };
+  });
+  const counts = {
+    active: rows.filter((r) => !r.t.isPaused && r.hasActive).length,
+    noLease: rows.filter((r) => !r.t.isPaused && !r.hasActive).length,
+    paused: rows.filter((r) => r.t.isPaused).length,
+  };
 
   return (
     <div>
@@ -60,8 +70,12 @@ export default async function AdminTenantsPage() {
         <div>
           <h1 className="text-2xl font-bold">Tenants</h1>
           <p className="text-sm text-slate-600">
-            {counts.active} active · {counts.paused} paused · {counts.lease_expired} lease expired. Tenants are
-            paused automatically at the end of their lease expiry day; extend the lease to reactivate them.
+            {counts.active} with an active lease · {counts.noLease} without · {counts.paused} paused. Tenants can buy
+            electricity only for units they hold an active lease on; manage leases on the{" "}
+            <Link href="/admin/leases" className="text-emerald-700 underline">
+              Leases
+            </Link>{" "}
+            page. Pausing blocks login entirely.
           </p>
         </div>
         <TenantForm />
@@ -71,63 +85,85 @@ export default async function AdminTenantsPage() {
             <thead className="border-b bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Meters</th>
-                <th className="px-3 py-2">Lease expiry</th>
+                <th className="px-3 py-2">Units</th>
                 <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2 text-right">Rent owed</th>
                 <th className="px-3 py-2">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {tenants.map((t) => {
-                const status = getAccountStatus(t, now);
-                const endsSoon =
-                  status.state === "active" &&
-                  t.leaseExpiryDate != null &&
-                  leaseEndsAt(t.leaseExpiryDate).getTime() - now.getTime() < SOON_MS;
-                return (
-                  <tr key={t.id} className="border-b align-top last:border-0">
-                    <td className="px-3 py-2">
-                      <span className="font-medium">{t.name}</span>
-                      <span className="block text-xs text-slate-500">{t.email}</span>
-                    </td>
-                    <td className="px-3 py-2 font-mono text-xs">
-                      {t.meters.map((m) => m.meterNumber).join(", ") || "—"}
-                    </td>
-                    <td className="whitespace-nowrap px-3 py-2">
-                      {t.leaseExpiryDate ? fmtDate(t.leaseExpiryDate) : <span className="text-slate-400">No lease date</span>}
-                      {t.leaseNotes && <span className="block max-w-[14rem] text-xs text-slate-500">{t.leaseNotes}</span>}
-                    </td>
-                    <td className="space-y-1 px-3 py-2">
-                      {status.state === "active" &&
-                        (endsSoon ? <Badge tone="amber">Lease ends soon</Badge> : <Badge tone="green">Active</Badge>)}
-                      {status.state === "paused" && <Badge tone="slate">Paused</Badge>}
-                      {status.state === "lease_expired" && <Badge tone="red">Lease expired</Badge>}
-                      {t.isPaused && t.pausedReason && (
-                        <span className="block max-w-[12rem] text-xs text-slate-500">{t.pausedReason}</span>
-                      )}
-                      {t.isPaused && t.pausedAt && (
-                        <span className="block text-xs text-slate-400">since {fmtDate(t.pausedAt)}</span>
-                      )}
-                      {t.mustChangePassword && (
-                        <span className="block text-xs text-slate-500">Password reset pending</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <TenantActions
-                        tenant={{
-                          id: t.id,
-                          name: t.name,
-                          email: t.email,
-                          leaseExpiryDate: t.leaseExpiryDate?.toISOString() ?? null,
-                          leaseNotes: t.leaseNotes,
-                          isPaused: t.isPaused,
-                        }}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-              {tenants.length === 0 && (
+              {rows.map(({ t, current, hasActive, owed }) => (
+                <tr key={t.id} className="border-b align-top last:border-0">
+                  <td className="px-3 py-2">
+                    <span className="font-medium">{t.name}</span>
+                    <span className="block text-xs text-slate-500">{t.email}</span>
+                    {t.phone && <span className="block text-xs text-slate-500">{t.phone}</span>}
+                  </td>
+                  <td className="space-y-1 px-3 py-2">
+                    {current.map((l) => {
+                      const end = effectiveEnd(l);
+                      const left = daysLeft(l, today);
+                      return (
+                        <div key={l.id}>
+                          <span>
+                            {l.unit.property.name} — {l.unit.name}
+                          </span>
+                          <span
+                            className={`block text-xs ${
+                              l.state === "expired"
+                                ? "text-red-700"
+                                : l.state === "active" && left != null && left <= SOON_DAYS
+                                  ? "text-amber-700"
+                                  : "text-slate-500"
+                            }`}
+                          >
+                            {l.state === "upcoming"
+                              ? `starts ${fmtDay(l.startDate)}`
+                              : l.state === "expired"
+                                ? `lease expired ${fmtDay(end!)}`
+                                : end
+                                  ? `until ${fmtDay(end)}`
+                                  : "rolling"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    {current.length === 0 && <span className="text-slate-400">—</span>}
+                    <Link href={`/admin/leases?tenant=${t.id}&status=all`} className="block text-xs text-emerald-700 hover:underline">
+                      {t.leases.length ? "Lease history" : "Add lease"}
+                    </Link>
+                  </td>
+                  <td className="space-y-1 px-3 py-2">
+                    {t.isPaused ? (
+                      <Badge tone="slate">Paused</Badge>
+                    ) : hasActive ? (
+                      <Badge tone="green">Active</Badge>
+                    ) : (
+                      <Badge tone="amber">No active lease</Badge>
+                    )}
+                    {t.isPaused && t.pausedReason && (
+                      <span className="block max-w-[12rem] text-xs text-slate-500">{t.pausedReason}</span>
+                    )}
+                    {t.isPaused && t.pausedAt && <span className="block text-xs text-slate-400">since {fmtDay(t.pausedAt)}</span>}
+                    {t.mustChangePassword && <span className="block text-xs text-slate-500">Password reset pending</span>}
+                  </td>
+                  <td className={`whitespace-nowrap px-3 py-2 text-right ${owed > 0 ? "font-medium text-red-700" : "text-slate-500"}`}>
+                    {owed > 0 ? (
+                      <Link href={`/admin/rent?tenant=${t.id}`} className="hover:underline">
+                        {ngn(owed)}
+                      </Link>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    <TenantActions
+                      tenant={{ id: t.id, name: t.name, email: t.email, phone: t.phone, isPaused: t.isPaused }}
+                    />
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-3 py-8 text-center text-slate-500">
                     No tenants found.

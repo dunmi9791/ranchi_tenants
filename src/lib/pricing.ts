@@ -1,25 +1,24 @@
 import type { Company, Settings } from "@prisma/client";
 import { prisma } from "./prisma";
-import { getMeterRow, stronLogin } from "./stronpower";
 
 /** Smallest kWh step we vend; StronPower's own UI works in 0.1 kWh. */
 export const KWH_STEP = 0.1;
 export const MIN_KWH = 1;
 
 export type Tariff = {
-  /** NGN per kWh before VAT, from StronPower */
+  /** NGN per kWh, set per company in the app */
   price: number;
-  /** VAT % from StronPower */
+  /** VAT % (the company price is all-inclusive, so 0) */
   vatPercent: number;
-  /** NGN per kWh including VAT — what StronPower charges */
+  /** NGN per kWh the tenant pays for energy */
   unitPrice: number;
-  source: "stronpower" | "dry-run";
+  source: "company";
 };
 
 export type Quote = {
   kwh: number;
   unitPrice: number;
-  /** Energy cost recorded on StronPower */
+  /** Energy cost at the company price (kWh × unitPrice) */
   energyAmount: number;
   serviceFee: number;
   /** What the tenant pays via Paystack */
@@ -49,9 +48,9 @@ export function computeServiceFee(
 }
 
 /**
- * Turn the naira the tenant wants to spend into whole-step kWh at StronPower's price.
+ * Turn the naira the tenant wants to spend into whole-step kWh at the company price.
  * kWh is rounded DOWN so the energy cost never exceeds what they entered; the tenant
- * is charged exactly kWh × unitPrice (+ service fee), which is what StronPower records.
+ * is charged exactly kWh × unitPrice (+ service fee).
  */
 export function quoteForNaira(
   naira: number,
@@ -65,40 +64,10 @@ export function quoteForNaira(
   return { kwh, unitPrice: tariff.unitPrice, energyAmount, serviceFee, total: round2(energyAmount + serviceFee) };
 }
 
-const CACHE_MS = 5 * 60 * 1000;
-const tariffCache = new Map<string, { tariff: Tariff; at: number }>();
-
 /**
- * Current NGN/kWh for a meter, read from StronPower's vending grid.
- * Cached briefly for quotes; pass fresh=true when creating a purchase.
- * With STRON_DRY_RUN=true the company's configured nairaPerKwh is used instead.
+ * NGN/kWh for a company's meters — the price an admin sets in the app (Admin → Companies).
+ * StronPower's own tariff is not used: we sell kWh at this price and vend those kWh.
  */
-export async function getTariff(
-  company: Pick<Company, "id" | "stronBaseUrl" | "stronCompanyName" | "stronUsername" | "stronPassword" | "nairaPerKwh">,
-  meterNumber: string,
-  { fresh = false } = {}
-): Promise<Tariff> {
-  if (process.env.STRON_DRY_RUN === "true") {
-    return { price: company.nairaPerKwh, vatPercent: 0, unitPrice: company.nairaPerKwh, source: "dry-run" };
-  }
-
-  const key = `${company.id}:${meterNumber}`;
-  const hit = tariffCache.get(key);
-  if (!fresh && hit && Date.now() - hit.at < CACHE_MS) return hit.tariff;
-
-  const jar = await stronLogin(company);
-  const row = await getMeterRow(company, jar, meterNumber);
-  const price = Number(row.PRICE);
-  const vatPercent = Number(row.VAT || 0);
-  if (!Number.isFinite(price) || price <= 0) {
-    throw new Error(`StronPower returned no usable price for meter ${meterNumber}`);
-  }
-  const tariff: Tariff = {
-    price,
-    vatPercent: Number.isFinite(vatPercent) ? vatPercent : 0,
-    unitPrice: round2(price * (1 + (Number.isFinite(vatPercent) ? vatPercent : 0) / 100)),
-    source: "stronpower",
-  };
-  tariffCache.set(key, { tariff, at: Date.now() });
-  return tariff;
+export function getTariff(company: Pick<Company, "nairaPerKwh">): Tariff {
+  return { price: company.nairaPerKwh, vatPercent: 0, unitPrice: company.nairaPerKwh, source: "company" };
 }

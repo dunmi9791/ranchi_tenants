@@ -32,7 +32,7 @@ export function BuyForm({ meters }: { meters: Meter[] }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  // Live quote at StronPower's current price, debounced while typing.
+  // Live quote at the company's price, debounced while typing.
   useEffect(() => {
     if (!meterId || !(naira > 0)) {
       setQuote(null);
@@ -112,7 +112,7 @@ export function BuyForm({ meters }: { meters: Meter[] }) {
   if (meters.length === 0) {
     return (
       <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-        No meters linked to your account yet. Ask your company admin to assign one, or register with a meter number.
+        No meters you can top up right now. Meters appear here for homes where your lease is active.
       </p>
     );
   }
@@ -140,7 +140,7 @@ export function BuyForm({ meters }: { meters: Meter[] }) {
         <input
           type="number"
           min={1}
-          step={100}
+          step="any"
           value={Number.isFinite(naira) ? naira : ""}
           onChange={(e) => setNaira(Number(e.target.value))}
           className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2"
