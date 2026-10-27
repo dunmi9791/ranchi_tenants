@@ -9,13 +9,25 @@ import { vendStsPin } from "./stronpower";
  * Company credentials stay server-side only.
  */
 export async function fulfillPurchase(purchaseId: string) {
-  const purchase = await prisma.purchase.findUnique({
+  const found = await prisma.purchase.findUnique({
     where: { id: purchaseId },
-    include: { company: true, meter: true },
+    include: { company: true, meter: { include: { company: true } } },
   });
-  if (!purchase) throw new Error("Purchase not found");
-  if (purchase.status === "VENDED" && purchase.stsPin) {
-    return purchase;
+  if (!found) throw new Error("Purchase not found");
+  if (found.status === "VENDED" && found.stsPin) {
+    return found;
+  }
+
+  // Vend through the meter's *current* company. purchase.companyId is a snapshot from when
+  // the tenant paid, so if an admin has since corrected the meter's company, retries would
+  // otherwise keep hitting the old company's StronPower account.
+  let purchase = found;
+  if (found.companyId !== found.meter.companyId) {
+    await prisma.purchase.update({
+      where: { id: found.id },
+      data: { companyId: found.meter.companyId },
+    });
+    purchase = { ...found, companyId: found.meter.companyId, company: found.meter.company };
   }
 
   const settled = await vendAndRecord(purchase);
