@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { authenticateUser } from "@/lib/auth";
+import { authenticateUser, pendingApplicant } from "@/lib/auth";
 import { getSession } from "@/lib/session";
 import { isFormPost, readBody, toFormRedirect } from "@/lib/form-post";
 
@@ -19,6 +19,9 @@ async function login(req: Request) {
     const body = schema.parse(await readBody(req));
     const auth = await authenticateUser(body.email, body.password);
     if (!auth) {
+      // Registered on the site but not yet given a lease: say so rather than "wrong password".
+      const pending = await pendingApplicant(body.email, body.password);
+      if (pending) return NextResponse.json({ error: pending }, { status: 403 });
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }
     if (auth.blocked) {

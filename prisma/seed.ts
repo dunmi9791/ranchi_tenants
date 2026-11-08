@@ -44,14 +44,44 @@ async function main() {
     },
   });
 
+  const property = await prisma.property.upsert({
+    where: { id: "seed-property-1" },
+    update: {},
+    create: { id: "seed-property-1", name: "Demo Court", address: "1 Demo Street", companyId: company.id },
+  });
+
+  const unit = await prisma.unit.upsert({
+    where: { id: "seed-unit-a1" },
+    update: {},
+    create: { id: "seed-unit-a1", name: "Flat A1", propertyId: property.id, rentAmount: 1_200_000, rentFrequency: "ANNUAL" },
+  });
+
   await prisma.meter.upsert({
     where: { meterNumber: "04161234567" },
-    update: { userId: tenant.id, companyId: company.id },
+    update: { unitId: unit.id, companyId: company.id },
     create: {
       meterNumber: "04161234567",
       label: "Flat A1",
       companyId: company.id,
-      userId: tenant.id,
+      unitId: unit.id,
+    },
+  });
+
+  // One-year lease from the start of this month, so the tenant can top up straight away.
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear() + 1, now.getUTCMonth(), 0));
+  await prisma.lease.upsert({
+    where: { id: "seed-lease-a1" },
+    update: {},
+    create: {
+      id: "seed-lease-a1",
+      unitId: unit.id,
+      tenantId: tenant.id,
+      startDate: start,
+      endDate: end,
+      rentAmount: 1_200_000,
+      rentFrequency: "ANNUAL",
     },
   });
 
@@ -59,7 +89,7 @@ async function main() {
   console.log("  Admin:  admin@ranchi.local / password123");
   console.log("  Tenant: tenant@ranchi.local / password123");
   console.log("  Company:", company.name);
-  console.log("  Meter: 04161234567 linked to tenant");
+  console.log("  Property: Demo Court, unit Flat A1 (meter 04161234567) leased to the tenant");
   void admin;
 }
 

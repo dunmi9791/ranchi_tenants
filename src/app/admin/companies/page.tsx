@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Nav } from "@/components/Nav";
 import { CompanyForm } from "@/components/CompanyForm";
+import { CompanyPriceForm } from "@/components/CompanyPriceForm";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 
@@ -8,6 +9,7 @@ export default async function AdminCompaniesPage() {
   const session = await getSession();
   if (!session.user) redirect("/login");
   if (session.user.role !== "ADMIN") redirect("/dashboard");
+  if (session.user.mustChangePassword) redirect("/account/password");
 
   const companies = await prisma.company.findMany({
     orderBy: { createdAt: "desc" },
@@ -29,8 +31,8 @@ export default async function AdminCompaniesPage() {
         <h1 className="text-2xl font-bold">Companies</h1>
         <p className="text-sm text-slate-600">
           Each company has its own StronPower base URL and credentials (never sent to the browser).
-          Tenants are charged StronPower&apos;s live tariff for their meter; the dry-run price is only
-          used when <code>STRON_DRY_RUN=true</code>.
+          Tenants pay the company&apos;s price per kWh set here; the naira amount is converted to kWh
+          at this price and only the kWh is sent to StronPower. Price changes apply from the next quote.
         </p>
         <CompanyForm />
         <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
@@ -40,7 +42,7 @@ export default async function AdminCompaniesPage() {
                 <th className="px-3 py-2">Name</th>
                 <th className="px-3 py-2">Stron base</th>
                 <th className="px-3 py-2">Company / user</th>
-                <th className="px-3 py-2" title="Only used when STRON_DRY_RUN=true; live prices come from StronPower">Dry-run ₦/kWh</th>
+                <th className="px-3 py-2">Price ₦/kWh</th>
                 <th className="px-3 py-2">Meters</th>
               </tr>
             </thead>
@@ -52,7 +54,9 @@ export default async function AdminCompaniesPage() {
                   <td className="px-3 py-2">
                     {c.stronCompanyName} / {c.stronUsername}
                   </td>
-                  <td className="px-3 py-2">{c.nairaPerKwh}</td>
+                  <td className="px-3 py-2">
+                    <CompanyPriceForm companyId={c.id} nairaPerKwh={c.nairaPerKwh} />
+                  </td>
                   <td className="px-3 py-2">{c._count.meters}</td>
                 </tr>
               ))}

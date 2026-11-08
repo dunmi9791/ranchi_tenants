@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { MIN_KWH, getSettings, getTariff, quoteForNaira } from "@/lib/pricing";
+import { findTenantMeter } from "@/lib/tenancy";
 
 const schema = z.object({
   meterId: z.string().min(1),
   naira: z.coerce.number().positive().max(10_000_000),
 });
 
-/** GET /api/quote?meterId=…&naira=… — kWh and total for a naira amount at StronPower's price. */
+/** GET /api/quote?meterId=…&naira=… — kWh and total for a naira amount at the company's price. */
 export async function GET(req: Request) {
   const session = await getSession();
   if (!session.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -17,17 +17,14 @@ export async function GET(req: Request) {
   const parsed = schema.safeParse(Object.fromEntries(new URL(req.url).searchParams));
   if (!parsed.success) return NextResponse.json({ error: "Invalid input" }, { status: 400 });
 
-  const meter = await prisma.meter.findUnique({
-    where: { id: parsed.data.meterId },
-    include: { company: true },
-  });
-  if (!meter || meter.userId !== session.user.id) {
+  const meter = await findTenantMeter(parsed.data.meterId, session.user.id);
+  if (!meter) {
     return NextResponse.json({ error: "Meter not found" }, { status: 404 });
   }
 
   try {
     const [tariff, settings] = await Promise.all([
-      getTariff(meter.company, meter.meterNumber),
+      getTariff(meter.company),
       getSettings(),
     ]);
     const quote = quoteForNaira(parsed.data.naira, tariff, settings);

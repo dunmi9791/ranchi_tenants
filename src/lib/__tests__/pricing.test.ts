@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeServiceFee, quoteForNaira } from "../pricing";
+import { computeServiceFee, getTariff, quoteForNaira } from "../pricing";
 
 const paystackRate = { serviceFeePercent: 1.5, serviceFeeFlat: 100, serviceFeeCap: 2000 };
 const noFee = { serviceFeePercent: 0, serviceFeeFlat: 0, serviceFeeCap: null };
@@ -55,5 +55,13 @@ describe("computeServiceFee", () => {
     const q = quoteForNaira(8000, { unitPrice: 800 }, paystackRate);
     expect(q.serviceFee).toBe(computeServiceFee(8000, paystackRate));
     expect(q.total).toBe(8000 + q.serviceFee);
+  });
+});
+
+describe("getTariff", () => {
+  it("uses the company's price set in the app", () => {
+    const t = getTariff({ nairaPerKwh: 200 });
+    expect(t).toEqual({ price: 200, vatPercent: 0, unitPrice: 200, source: "company" });
+    expect(quoteForNaira(5000, t, { serviceFeePercent: 0, serviceFeeFlat: 0, serviceFeeCap: null }).kwh).toBe(25);
   });
 });

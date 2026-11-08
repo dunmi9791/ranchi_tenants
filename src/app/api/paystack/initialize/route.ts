@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { initializeTransaction } from "@/lib/paystack";
 import { MIN_KWH, getSettings, getTariff, quoteForNaira } from "@/lib/pricing";
+import { findTenantMeter } from "@/lib/tenancy";
 
 const schema = z.object({
   meterId: z.string().min(1),
@@ -20,18 +21,15 @@ export async function POST(req: Request) {
     }
 
     const body = schema.parse(await req.json());
-    const meter = await prisma.meter.findUnique({
-      where: { id: body.meterId },
-      include: { company: true },
-    });
-
-    if (!meter || meter.userId !== session.user.id) {
-      return NextResponse.json({ error: "Meter not found" }, { status: 404 });
+    // Only meters on a unit the tenant currently leases; an expired lease stops top-ups.
+    const meter = await findTenantMeter(body.meterId, session.user.id);
+    if (!meter) {
+      return NextResponse.json({ error: "Meter not found or your lease on it is not active" }, { status: 404 });
     }
 
     // Always price from StronPower at the moment of purchase, never from the client.
     const [tariff, settings] = await Promise.all([
-      getTariff(meter.company, meter.meterNumber, { fresh: true }),
+      getTariff(meter.company),
       getSettings(),
     ]);
     const quote = quoteForNaira(body.nairaAmount, tariff, settings);

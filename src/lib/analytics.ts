@@ -1,4 +1,5 @@
 import type { Prisma, PurchaseStatus } from "@prisma/client";
+import { searchText, wordsWhere } from "./search";
 
 /** All reporting is in Lagos time (UTC+1, no DST); weeks start on Monday. */
 const LAGOS_OFFSET_MS = 60 * 60 * 1000;
@@ -18,6 +19,8 @@ export type Filters = {
   status: StatusFilter;
   tenantId: string | null;
   companyId: string | null;
+  /** Free text: tenant, meter number, Paystack reference or company */
+  q: string | null;
 };
 
 export const RANGE_LABELS: Record<RangePreset, string> = {
@@ -142,6 +145,7 @@ export function parseFilters(sp: Record<string, string | string[] | undefined>, 
     status,
     tenantId: one(sp.tenant) || null,
     companyId: one(sp.company) || null,
+    q: searchText(sp.q),
   };
 }
 
@@ -154,6 +158,7 @@ export function filtersToQuery(f: Filters): string {
   }
   if (f.tenantId) q.set("tenant", f.tenantId);
   if (f.companyId) q.set("company", f.companyId);
+  if (f.q) q.set("q", f.q);
   return q.toString();
 }
 
@@ -176,6 +181,12 @@ export function purchaseWhere(f: Filters): Prisma.PurchaseWhereInput {
       STATUS_WHERE[f.status],
       f.tenantId ? { userId: f.tenantId } : {},
       f.companyId ? { companyId: f.companyId } : {},
+      wordsWhere<Prisma.PurchaseWhereInput>(f.q, (c) => [
+        { user: { OR: [{ name: c }, { email: c }, { phone: c }] } },
+        { meter: { meterNumber: c } },
+        { paystackReference: c },
+        { company: { name: c } },
+      ]),
     ],
   };
 }

@@ -8,8 +8,7 @@ type Tenant = {
   id: string;
   name: string;
   email: string;
-  leaseExpiryDate: string | null;
-  leaseNotes: string | null;
+  phone: string | null;
   isPaused: boolean;
 };
 
@@ -18,6 +17,7 @@ export function TenantActions({ tenant }: { tenant: Tenant }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [notified, setNotified] = useState<{ channel: "EMAIL" | "SMS"; to: string; error: string | null }[]>([]);
   const [editing, setEditing] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -55,13 +55,14 @@ export function TenantActions({ tenant }: { tenant: Tenant }) {
   async function resetPassword() {
     if (
       !window.confirm(
-        `Reset the password for ${tenant.name}? They'll be logged out and must choose a new password at next login.`
+        `Reset the password for ${tenant.name}? They'll be logged out, sent a temporary password by email/SMS (if notifications are on), and must choose a new password at next login.`
       )
     )
       return;
     const data = await post("reset-password", {}, "reset");
     if (data?.password) {
       setTempPassword(data.password);
+      setNotified(data.notified ?? []);
       setCopied(false);
     }
   }
@@ -72,7 +73,7 @@ export function TenantActions({ tenant }: { tenant: Tenant }) {
     <div className="space-y-1">
       <div className="flex flex-wrap gap-1">
         <button onClick={() => setEditing(true)} className={`${btn} border-slate-300 hover:bg-slate-100`}>
-          Edit lease
+          Edit
         </button>
         <button
           onClick={togglePause}
@@ -120,7 +121,26 @@ export function TenantActions({ tenant }: { tenant: Tenant }) {
               Done
             </button>
           </div>
-          <p className="mt-1 text-emerald-800">Share it privately; they&apos;ll be asked to change it.</p>
+          {notified.filter((n) => !n.error).length > 0 && (
+            <p className="mt-1">
+              Sent by{" "}
+              {notified
+                .filter((n) => !n.error)
+                .map((n) => `${n.channel === "EMAIL" ? "email" : "SMS"} to ${n.to}`)
+                .join(" and ")}
+              .
+            </p>
+          )}
+          {notified
+            .filter((n) => n.error)
+            .map((n) => (
+              <p key={n.channel + n.to} className="mt-1 text-red-700">
+                {n.channel === "EMAIL" ? "Email" : "SMS"} to {n.to} failed: {n.error}
+              </p>
+            ))}
+          {!notified.some((n) => !n.error) && (
+            <p className="mt-1 text-emerald-800">Share it privately; they&apos;ll be asked to change it.</p>
+          )}
         </div>
       )}
 
@@ -135,8 +155,7 @@ export function TenantActions({ tenant }: { tenant: Tenant }) {
                 id: tenant.id,
                 name: tenant.name,
                 email: tenant.email,
-                leaseExpiryDate: tenant.leaseExpiryDate,
-                leaseNotes: tenant.leaseNotes,
+                phone: tenant.phone,
               }}
               onSuccess={() => setEditing(false)}
             />

@@ -1,0 +1,7 @@
+// The pre-Postgres SQLite database, kept only so `migrate deploy` can bring an old SQLite file up to
+// date before scripts/sqlite-to-postgres.ts copies it (see "Moving from SQLite" in the README).
+// The app itself uses ../schema.prisma.
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}

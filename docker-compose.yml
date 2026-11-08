@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ranchi-db
+    restart: unless-stopped
+    # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+    env_file: .env.docker
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Uncomment to reach the database from the host (e.g. psql, or a GUI client).
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+  app:
+    build: .
+    # Set APP_VERSION in the shell or in a .env file next to this file to run a specific tag.
+    image: ranchi-tenants:${APP_VERSION:-latest}
+    container_name: ranchi-tenants
+    restart: unless-stopped
+    # Includes DATABASE_URL=postgresql://USER:PASSWORD@db:5432/DB
+    env_file: .env.docker
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${HOST_PORT:-3000}:3000"
+    volumes:
+      # The old SQLite database, kept read-only for rollback until the Postgres cutover is confirmed.
+      - ranchi-data:/app/data:ro
+
+  # Daily pg_dump into ./backups (keeps 7 daily, 4 weekly, 6 monthly). Copy that folder off the server.
+  backup:
+    image: prodrigestivill/postgres-backup-local:16
+    container_name: ranchi-backup
+    restart: unless-stopped
+    env_file: .env.docker
+    environment:
+      POSTGRES_HOST: db
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+      HEALTHCHECK_PORT: 8080
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backups:/backups
+
+volumes:
+  pg-data:
+  ranchi-data:

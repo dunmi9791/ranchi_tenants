@@ -46,8 +46,15 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# sqlite
+# sqlite (pre-Postgres databases and their backups)
 /prisma/dev.db
 /prisma/dev.db-journal
 *.db
 *.db-journal
+*.db.bak*
+
+# Postgres dumps from the backup container
+/backups/
+
+# docker compose secrets
+.env.docker

@@ -17,7 +17,7 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
     include: {
       company: { select: { id: true, name: true } },
-      user: { select: { id: true, email: true, name: true } },
+      unit: { select: { id: true, name: true, property: { select: { id: true, name: true } } } },
     },
   });
   return NextResponse.json({ meters });
@@ -27,16 +27,27 @@ const schema = z.object({
   meterNumber: z.string().min(5),
   label: z.string().optional(),
   companyId: z.string().min(1),
-  userEmail: z.string().email().optional().or(z.literal("")),
+  /** Unit the meter supplies; "" = not installed in a unit */
+  unitId: z.string().optional().or(z.literal("")),
 });
 
-const patchSchema = z.object({
-  id: z.string().min(1),
-  meterNumber: z.string().min(5).optional(),
-  label: z.string().optional(),
-  companyId: z.string().min(1).optional(),
-  userEmail: z.string().email().optional().or(z.literal("")),
-});
+const patchSchema = schema.partial().extend({ id: z.string().min(1) });
+
+/**
+ * A meter is vended through its company's StronPower account, so it can only be placed in a
+ * unit of a property under that same company. Returns an error message, or null if fine.
+ */
+async function unitError(unitId: string, companyId: string): Promise<string | null> {
+  const unit = await prisma.unit.findUnique({
+    where: { id: unitId },
+    select: { property: { select: { companyId: true, name: true } } },
+  });
+  if (!unit) return "Unit not found";
+  if (unit.property.companyId !== companyId) {
+    return `${unit.property.name} belongs to a different company than this meter`;
+  }
+  return null;
+}
 
 export async function PATCH(req: Request) {
   if (!(await assertAdmin())) {
@@ -49,23 +60,11 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: "Meter not found" }, { status: 404 });
     }
 
-    let userId: string | null | undefined = undefined;
-    if (body.userEmail !== undefined) {
-      if (body.userEmail === "") {
-        userId = null;
-      } else {
-        const user = await prisma.user.findUnique({ where: { email: body.userEmail.toLowerCase() } });
-        if (!user) {
-          return NextResponse.json({ error: "User email not found" }, { status: 404 });
-        }
-        userId = user.id;
-        // Ensure user is in the correct company
-        const targetCompanyId = body.companyId || existing.companyId;
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { companyId: targetCompanyId },
-        });
-      }
+    const companyId = body.companyId || existing.companyId;
+    const unitId = body.unitId === undefined ? existing.unitId : body.unitId || null;
+    if (unitId) {
+      const error = await unitError(unitId, companyId);
+      if (error) return NextResponse.json({ error }, { status: 400 });
     }
 
     const meter = await prisma.meter.update({
@@ -74,7 +73,7 @@ export async function PATCH(req: Request) {
         meterNumber: body.meterNumber,
         label: body.label,
         companyId: body.companyId,
-        userId,
+        unitId,
       },
     });
     return NextResponse.json({ meter });
@@ -93,17 +92,9 @@ export async function POST(req: Request) {
   }
   try {
     const body = schema.parse(await req.json());
-    let userId: string | undefined;
-    if (body.userEmail) {
-      const user = await prisma.user.findUnique({ where: { email: body.userEmail.toLowerCase() } });
-      if (!user) {
-        return NextResponse.json({ error: "User email not found" }, { status: 404 });
-      }
-      userId = user.id;
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { companyId: body.companyId },
-      });
+    if (body.unitId) {
+      const error = await unitError(body.unitId, body.companyId);
+      if (error) return NextResponse.json({ error }, { status: 400 });
     }
 
     const meter = await prisma.meter.create({
@@ -111,7 +102,7 @@ export async function POST(req: Request) {
         meterNumber: body.meterNumber,
         label: body.label,
         companyId: body.companyId,
-        userId,
+        unitId: body.unitId || null,
       },
     });
     return NextResponse.json({ meter }, { status: 201 });
