@@ -53,10 +53,18 @@ export default async function PropertyPage({ params }: { params: Promise<{ id: s
             </p>
             {property.notes && <p className="mt-1 text-sm text-slate-500">{property.notes}</p>}
           </div>
-          <PropertyActions
-            property={{ id: property.id, name: property.name, companyId: property.companyId, address: property.address, notes: property.notes }}
-            companies={companies}
-          />
+          <div className="flex flex-wrap items-start gap-2">
+            <a
+              href={`/api/admin/properties/occupants?${new URLSearchParams({ propertyId: property.id })}`}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              Export occupants
+            </a>
+            <PropertyActions
+              property={{ id: property.id, name: property.name, companyId: property.companyId, address: property.address, notes: property.notes }}
+              companies={companies}
+            />
+          </div>
         </div>
 
         <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">

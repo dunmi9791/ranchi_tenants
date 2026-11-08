@@ -1,50 +1,68 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Badge } from "@/components/Badge";
+import type { Prisma } from "@prisma/client";
 import { Nav } from "@/components/Nav";
+import { SearchBox } from "@/components/SearchBox";
 import { TenantActions } from "@/components/TenantActions";
 import { TenantForm } from "@/components/TenantForm";
 import { daysLeft, effectiveEnd, fmtDay, lagosToday, leaseState } from "@/lib/leases";
 import { prisma } from "@/lib/prisma";
 import { chargeStatus, syncRentCharges } from "@/lib/rent";
+import { searchText, wordsWhere } from "@/lib/search";
 import { getSession } from "@/lib/session";
 
 const SOON_DAYS = 30;
 const ngn = (n: number) => `₦${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
-export default async function AdminTenantsPage() {
+export default async function AdminTenantsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getSession();
   if (!session.user) redirect("/login");
   if (session.user.role !== "ADMIN") redirect("/dashboard");
   if (session.user.mustChangePassword) redirect("/account/password");
 
+  const q = searchText((await searchParams).q);
+  const search = wordsWhere<Prisma.UserWhereInput>(q, (c) => [
+    { name: c },
+    { email: c },
+    { phone: c },
+    { leases: { some: { unit: { OR: [{ name: c }, { property: { name: c } }] } } } },
+  ]);
+
   await syncRentCharges();
-  const tenants = await prisma.user.findMany({
-    where: { role: "TENANT" },
-    orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      phone: true,
-      isPaused: true,
-      pausedAt: true,
-      pausedReason: true,
-      mustChangePassword: true,
-      leases: {
-        orderBy: { startDate: "desc" },
-        select: {
-          id: true,
-          startDate: true,
-          endDate: true,
-          moveOutDate: true,
-          renewal: { select: { id: true } },
-          unit: { select: { name: true, property: { select: { name: true } } } },
-          rentCharges: { select: { amount: true, dueDate: true, payments: { select: { amount: true, status: true } } } },
+  const [tenants, pendingApplicants] = await Promise.all([
+    prisma.user.findMany({
+      where: { AND: [{ role: "TENANT" }, search] },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        isPaused: true,
+        pausedAt: true,
+        pausedReason: true,
+        mustChangePassword: true,
+        leases: {
+          orderBy: { startDate: "desc" },
+          select: {
+            id: true,
+            startDate: true,
+            endDate: true,
+            moveOutDate: true,
+            renewal: { select: { id: true } },
+            unit: { select: { name: true, property: { select: { name: true } } } },
+            rentCharges: { select: { amount: true, dueDate: true, payments: { select: { amount: true, status: true } } } },
+          },
         },
       },
-    },
-  });
+    }),
+    prisma.applicant.count({ where: { status: "PENDING" } }),
+  ]);
 
   const today = lagosToday();
   const rows = tenants.map((t) => {
@@ -77,8 +95,17 @@ export default async function AdminTenantsPage() {
             </Link>{" "}
             page. Pausing blocks login entirely.
           </p>
+          {pendingApplicants > 0 && (
+            <p className="mt-2 text-sm">
+              <Link href="/admin/applicants" className="font-medium text-amber-700 underline">
+                {pendingApplicants} registration{pendingApplicants === 1 ? "" : "s"} from the site awaiting a lease
+              </Link>
+            </p>
+          )}
         </div>
         <TenantForm />
+
+        <SearchBox action="/admin/tenants" q={q} placeholder="Search name, email, phone, unit or property…" />
 
         <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
           <table className="min-w-full text-left text-sm">
@@ -166,7 +193,7 @@ export default async function AdminTenantsPage() {
               {rows.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-3 py-8 text-center text-slate-500">
-                    No tenants found.
+                    {q ? `No tenants match "${q}".` : "No tenants found."}
                   </td>
                 </tr>
               )}

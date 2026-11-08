@@ -3,7 +3,9 @@ import { redirect } from "next/navigation";
 import { Badge } from "@/components/Badge";
 import { LeaseActions } from "@/components/LeaseActions";
 import { LeaseForm } from "@/components/LeaseForm";
+import type { Prisma } from "@prisma/client";
 import { Nav } from "@/components/Nav";
+import { SearchBox } from "@/components/SearchBox";
 import {
   DAY_MS,
   FREQUENCY_LABELS,
@@ -21,6 +23,7 @@ import {
 import { occupancyLeaseSelect, occupancyOf, occupancyText } from "@/lib/occupancy";
 import { prisma } from "@/lib/prisma";
 import { chargeStatus, syncRentCharges } from "@/lib/rent";
+import { searchText, wordsWhere } from "@/lib/search";
 import { getSession } from "@/lib/session";
 
 const ngn = (n: number) => `₦${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -60,12 +63,18 @@ export default async function LeasesPage({
   const windowDays = WINDOWS.find((w) => String(w) === one("days")) ?? 30;
   const tenantFilter = one("tenant") || null;
   const unitIdParam = one("unitId");
+  const term = searchText(sp.q);
+  const search = wordsWhere<Prisma.LeaseWhereInput>(term, (c) => [
+    { tenant: { OR: [{ name: c }, { email: c }, { phone: c }] } },
+    { unit: { OR: [{ name: c }, { property: { name: c } }] } },
+    { notes: c },
+  ]);
 
   await syncRentCharges();
   const today = lagosToday();
   const [leases, units, tenants] = await Promise.all([
     prisma.lease.findMany({
-      where: tenantFilter ? { tenantId: tenantFilter } : {},
+      where: { AND: [tenantFilter ? { tenantId: tenantFilter } : {}, search] },
       orderBy: { startDate: "desc" },
       include: {
         tenant: { select: { id: true, name: true, email: true } },
@@ -124,7 +133,7 @@ export default async function LeasesPage({
 
   const query = (patch: Record<string, string | null>) => {
     const q = new URLSearchParams();
-    const merged = { status: filter, days: String(windowDays), tenant: tenantFilter, ...patch };
+    const merged = { status: filter, days: String(windowDays), tenant: tenantFilter, q: term, ...patch };
     for (const [k, v] of Object.entries(merged)) if (v) q.set(k, v);
     return `/admin/leases?${q}`;
   };
@@ -175,6 +184,12 @@ export default async function LeasesPage({
             </span>
           )}
         </div>
+        <SearchBox
+          action="/admin/leases"
+          q={term}
+          placeholder="Search tenant, unit or property…"
+          keep={{ status: filter, days: String(windowDays), tenant: tenantFilter }}
+        />
 
         <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
           <table className="min-w-full text-left text-sm">
@@ -269,7 +284,7 @@ export default async function LeasesPage({
               {shown.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-3 py-8 text-center text-slate-500">
-                    No leases here.
+                    {term ? `No leases match "${term}".` : "No leases here."}
                   </td>
                 </tr>
               )}

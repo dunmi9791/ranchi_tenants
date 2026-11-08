@@ -45,3 +45,15 @@ export async function authenticateUser(
     blocked: blockedMessage(getAccountStatus(user)),
   };
 }
+
+/**
+ * Message for someone who registered on the site but isn't a tenant yet, or null.
+ * Only revealed with the right password, so it doesn't leak who has applied.
+ */
+export async function pendingApplicant(email: string, password: string): Promise<string | null> {
+  const applicant = await prisma.applicant.findUnique({ where: { email: email.toLowerCase() } });
+  if (!applicant || !(await verifyPassword(password, applicant.passwordHash))) return null;
+  return applicant.status === "PENDING"
+    ? "Your registration is awaiting approval. You can log in once your property manager has added your lease."
+    : "Your registration was not approved. Please contact your property manager.";
+}

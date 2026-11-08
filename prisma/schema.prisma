@@ -46,6 +46,33 @@ model User {
   updatedAt            DateTime      @updatedAt
 }
 
+enum ApplicantStatus {
+  PENDING
+  REJECTED
+}
+
+/// Someone who registered on the site. They can't log in until an admin gives them a lease
+/// on /admin/applicants, which creates their User (keeping the password they chose) and removes this row.
+model Applicant {
+  id             String          @id @default(cuid())
+  email          String          @unique
+  name           String
+  phone          String?
+  passwordHash   String
+  /// Optional message from the registration form (e.g. the flat they're moving into)
+  message        String?
+  /// The unit they said they occupy or plan to occupy; a hint for the admin, not a lease
+  unitId         String?
+  unit           Unit?           @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  status         ApplicantStatus @default(PENDING)
+  rejectedAt     DateTime?
+  rejectedReason String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([status])
+}
+
 model Company {
   id               String     @id @default(cuid())
   name             String
@@ -112,6 +139,8 @@ model Unit {
   notes         String?
   meters        Meter[]
   leases        Lease[]
+  /// Applicants who picked this unit when registering
+  applicants    Applicant[]
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 

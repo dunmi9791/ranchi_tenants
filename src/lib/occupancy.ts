@@ -16,7 +16,10 @@ export const occupancyLeaseSelect = {
 type SelectedLease = Prisma.LeaseGetPayload<{ select: typeof occupancyLeaseSelect }>;
 export type UnitLease = SelectedLease & { hasRenewal: boolean };
 
-export function occupancyOf(leases: SelectedLease[], today: Date = lagosToday()): Occupancy<UnitLease> {
+export function occupancyOf<L extends SelectedLease>(
+  leases: L[],
+  today: Date = lagosToday()
+): Occupancy<L & { hasRenewal: boolean }> {
   return unitOccupancy(
     leases.map((l) => ({ ...l, hasRenewal: !!l.renewal })),
     today

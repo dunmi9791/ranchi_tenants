@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Nav } from "@/components/Nav";
+import { SearchBox } from "@/components/SearchBox";
 import { MeterForm, type MeterRow, type UnitChoice } from "@/components/MeterForm";
 import type { SessionUser } from "@/lib/session";
 
@@ -10,11 +11,13 @@ export default function MetersClient({
   companies,
   units,
   user,
+  q,
 }: {
   meters: (MeterRow & { companyName: string; unitLabel: string | null; tenant: { name: string; email: string } | null })[];
   companies: { id: string; name: string }[];
   units: UnitChoice[];
   user: SessionUser;
+  q: string | null;
 }) {
   const [editingMeter, setEditingMeter] = useState<MeterRow | null>(null);
 
@@ -34,6 +37,7 @@ export default function MetersClient({
           editingMeter={editingMeter}
           onCancel={() => setEditingMeter(null)}
         />
+        <SearchBox action="/admin/meters" q={q} placeholder="Search meter number, label, unit, property or tenant…" />
         <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
           <table className="min-w-full text-left text-sm">
             <thead className="border-b bg-slate-50 text-slate-600">

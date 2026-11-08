@@ -30,6 +30,8 @@ export type LeaseData = {
 type Props =
   | { mode: "create"; units: UnitOption[]; tenants: { id: string; label: string }[]; defaultUnitId?: string; defaultTenantId?: string; onDone?: () => void }
   | { mode: "edit"; lease: LeaseData; onDone: () => void }
+  /** Turn a site registration into a tenant with this lease */
+  | { mode: "approve"; applicant: { id: string; name: string; unitId?: string | null }; units: UnitOption[]; onDone: () => void }
   /** lease = the one being renewed, with startDate/endDate already set to the proposed new term */
   | { mode: "renew"; lease: LeaseData & { unitId: string; tenantId: string }; onDone: () => void };
 
@@ -37,9 +39,11 @@ export function LeaseForm(props: Props) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const initial = props.mode === "create" ? null : props.lease;
-  const [unitId, setUnitId] = useState(props.mode === "create" ? (props.defaultUnitId ?? "") : "");
-  const unit = props.mode === "create" ? props.units.find((u) => u.id === unitId) : undefined;
+  const initial = props.mode === "create" || props.mode === "approve" ? null : props.lease;
+  const [unitId, setUnitId] = useState(
+    props.mode === "create" ? (props.defaultUnitId ?? "") : props.mode === "approve" ? (props.applicant.unitId ?? "") : ""
+  );
+  const unit = props.mode === "create" || props.mode === "approve" ? props.units.find((u) => u.id === unitId) : undefined;
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -65,6 +69,8 @@ export function LeaseForm(props: Props) {
           tenantId: props.lease.tenantId,
           renewedFromId: props.lease.id,
         });
+      } else if (props.mode === "approve") {
+        await sendJson(`/api/admin/applicants/${props.applicant.id}/approve`, "POST", { ...terms, unitId });
       } else {
         await sendJson("/api/admin/leases", "POST", { ...terms, unitId, tenantId: fd.get("tenantId") });
         form.reset();
@@ -79,13 +85,17 @@ export function LeaseForm(props: Props) {
     }
   }
 
-  const title =
-    props.mode === "create" ? "New lease" : props.mode === "renew" ? "Renew lease" : "Edit lease";
+  const title = {
+    create: "New lease",
+    renew: "Renew lease",
+    edit: "Edit lease",
+    approve: props.mode === "approve" ? `Add lease for ${props.applicant.name}` : "",
+  }[props.mode];
 
   return (
     <form onSubmit={onSubmit} className="grid gap-3 rounded-xl border bg-white p-5 shadow-sm sm:grid-cols-2">
       <h2 className="text-lg font-semibold sm:col-span-2">{title}</h2>
-      {props.mode === "create" ? (
+      {props.mode === "create" || props.mode === "approve" ? (
         <>
           <label className="block text-sm">
             <span className="font-medium">Unit</span>
@@ -98,17 +108,23 @@ export function LeaseForm(props: Props) {
               ))}
             </select>
           </label>
-          <label className="block text-sm">
-            <span className="font-medium">Tenant</span>
-            <select name="tenantId" required defaultValue={props.defaultTenantId ?? ""} className={inputClass}>
-              <option value="">Choose a tenant…</option>
-              {props.tenants.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {props.mode === "approve" ? (
+            <p className="self-end pb-2 text-sm text-slate-600">
+              {props.applicant.name} becomes a tenant and can log in with the password they registered with.
+            </p>
+          ) : (
+            <label className="block text-sm">
+              <span className="font-medium">Tenant</span>
+              <select name="tenantId" required defaultValue={props.defaultTenantId ?? ""} className={inputClass}>
+                <option value="">Choose a tenant…</option>
+                {props.tenants.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </>
       ) : (
         <p className="text-sm text-slate-600 sm:col-span-2">
@@ -158,7 +174,7 @@ export function LeaseForm(props: Props) {
           disabled={loading}
           className="flex-1 rounded-md bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
         >
-          {loading ? "Saving…" : props.mode === "renew" ? "Create renewal" : "Save lease"}
+          {loading ? "Saving…" : props.mode === "renew" ? "Create renewal" : props.mode === "approve" ? "Add lease & make tenant" : "Save lease"}
         </button>
         {props.mode !== "create" && (
           <button type="button" onClick={props.onDone} className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium hover:bg-slate-50">

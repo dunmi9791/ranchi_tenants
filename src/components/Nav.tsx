@@ -33,6 +33,9 @@ export function Nav({ user }: { user?: SessionUser | null }) {
                   <Link href="/admin/tenants" className="rounded-md px-2 py-1 hover:bg-slate-100">
                     Tenants
                   </Link>
+                  <Link href="/admin/applicants" className="rounded-md px-2 py-1 hover:bg-slate-100">
+                    Applicants
+                  </Link>
                   <Link href="/admin/meters" className="rounded-md px-2 py-1 hover:bg-slate-100">
                     Meters
                   </Link>

@@ -157,6 +157,7 @@ export default async function AdminPurchasesPage({
           status={f.status}
           tenant={f.tenantId ?? ""}
           company={f.companyId ?? ""}
+          q={f.q ?? ""}
           ranges={RANGE_LABELS}
           statuses={STATUS_LABELS}
           tenants={tenants.map((t) => ({

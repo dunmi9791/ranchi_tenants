@@ -13,6 +13,7 @@ type Props = {
   status: string;
   tenant: string;
   company: string;
+  q: string;
   ranges: Record<string, string>;
   statuses: Record<string, string>;
   tenants: Option[];
@@ -30,6 +31,7 @@ export function PurchaseFilters(props: Props) {
     status: props.status,
     tenant: props.tenant,
     company: props.company,
+    q: props.q,
   });
 
   function apply(next: typeof v) {
@@ -44,11 +46,12 @@ export function PurchaseFilters(props: Props) {
     q.set("status", next.status);
     if (next.tenant) q.set("tenant", next.tenant);
     if (next.company) q.set("company", next.company);
+    if (next.q.trim()) q.set("q", next.q.trim());
     router.push(`${pathname}?${q.toString()}`);
   }
 
   const sel = "mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm";
-  const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLSelectElement | HTMLInputElement>) =>
+  const set = (k: Exclude<keyof typeof v, "q">) => (e: React.ChangeEvent<HTMLSelectElement | HTMLInputElement>) =>
     apply({ ...v, [k]: e.target.value });
 
   return (
@@ -120,6 +123,21 @@ export function PurchaseFilters(props: Props) {
             </option>
           ))}
         </select>
+      </label>
+      <label className="text-xs font-medium text-slate-600 sm:col-span-3 lg:col-span-6">
+        Search
+        <div className="mt-1 flex gap-2">
+          <input
+            type="search"
+            value={v.q}
+            onChange={(e) => setV({ ...v, q: e.target.value })}
+            placeholder="Tenant, meter number, Paystack reference or company — press Enter"
+            className="w-full max-w-md rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+          />
+          <button type="submit" className="rounded-md bg-slate-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700">
+            Search
+          </button>
+        </div>
       </label>
     </form>
   );

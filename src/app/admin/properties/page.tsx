@@ -2,9 +2,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Nav } from "@/components/Nav";
 import { PropertyForm } from "@/components/PropertyForm";
-import { daysLeft, lagosToday } from "@/lib/leases";
-import { occupancyLeaseSelect, occupancyOf } from "@/lib/occupancy";
+import { SearchBox } from "@/components/SearchBox";
 import { prisma } from "@/lib/prisma";
+import { propertyRows } from "@/lib/properties";
+import { searchText } from "@/lib/search";
 import { getSession } from "@/lib/session";
 
 function Tile({ label, value, sub, tone }: { label: string; value: string | number; sub?: string; tone?: "warn" }) {
@@ -17,36 +18,21 @@ function Tile({ label, value, sub, tone }: { label: string; value: string | numb
   );
 }
 
-export default async function PropertiesPage() {
+export default async function PropertiesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getSession();
   if (!session.user) redirect("/login");
   if (session.user.role !== "ADMIN") redirect("/dashboard");
   if (session.user.mustChangePassword) redirect("/account/password");
 
-  const [properties, companies] = await Promise.all([
-    prisma.property.findMany({
-      orderBy: { name: "asc" },
-      include: {
-        company: { select: { name: true } },
-        units: { select: { id: true, leases: { select: occupancyLeaseSelect } } },
-      },
-    }),
+  const q = searchText((await searchParams).q);
+  const [rows, companies] = await Promise.all([
+    propertyRows(q),
     prisma.company.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
   ]);
-
-  const today = lagosToday();
-  const rows = properties.map((p) => {
-    const counts = { occupied: 0, lease_expired: 0, vacant: 0, expiring: 0 };
-    for (const u of p.units) {
-      const o = occupancyOf(u.leases, today);
-      counts[o.status]++;
-      if (o.status === "occupied") {
-        const left = daysLeft(o.lease, today);
-        if (left != null && left <= 30) counts.expiring++;
-      }
-    }
-    return { p, counts };
-  });
   const total = rows.reduce(
     (t, r) => ({
       units: t.units + r.p.units.length,
@@ -63,9 +49,25 @@ export default async function PropertiesPage() {
     <div>
       <Nav user={session.user} />
       <main className="mx-auto max-w-6xl space-y-8 px-4 py-8">
-        <div>
-          <h1 className="text-2xl font-bold">Properties</h1>
-          <p className="text-sm text-slate-600">Buildings and their units. Open a property to manage its units and see who lives where.</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold">Properties</h1>
+            <p className="text-sm text-slate-600">Buildings and their units. Open a property to manage its units and see who lives where.</p>
+          </div>
+          <div className="flex gap-2">
+            <a
+              href={`/api/admin/properties/export${q ? `?${new URLSearchParams({ q })}` : ""}`}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              Export CSV
+            </a>
+            <a
+              href={`/api/admin/properties/occupants${q ? `?${new URLSearchParams({ q })}` : ""}`}
+              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+            >
+              Export occupants
+            </a>
+          </div>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-5">
@@ -75,6 +77,8 @@ export default async function PropertiesPage() {
           <Tile label="Lease expired" value={total.lease_expired} sub="tenant not renewed or moved out" tone={total.lease_expired ? "warn" : undefined} />
           <Tile label="Expiring in 30 days" value={total.expiring} tone={total.expiring ? "warn" : undefined} />
         </div>
+
+        <SearchBox action="/admin/properties" q={q} placeholder="Search property, address, company or unit…" />
 
         <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
           <table className="min-w-full text-left text-sm">
@@ -111,7 +115,7 @@ export default async function PropertiesPage() {
               {rows.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-3 py-8 text-center text-slate-500">
-                    No properties yet. Add your first building below.
+                    {q ? `No properties match "${q}".` : "No properties yet. Add your first building below."}
                   </td>
                 </tr>
               )}

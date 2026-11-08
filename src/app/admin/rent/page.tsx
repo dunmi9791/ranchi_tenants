@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import type { RentPaymentMethod } from "@prisma/client";
+import type { Prisma, RentPaymentMethod } from "@prisma/client";
 import { Badge } from "@/components/Badge";
 import { Nav } from "@/components/Nav";
+import { SearchBox } from "@/components/SearchBox";
 import { RecordPaymentButton, RemovePaymentButton } from "@/components/RentActions";
 import { dayInput, fmtDay, lagosToday } from "@/lib/leases";
 import { prisma } from "@/lib/prisma";
 import { CHARGE_LEAD_DAYS, type ChargeState, chargeStatus, syncRentCharges } from "@/lib/rent";
+import { searchText, wordsWhere } from "@/lib/search";
 import { getSession } from "@/lib/session";
 
 const ngn = (n: number) => `₦${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -56,7 +58,16 @@ export default async function RentPage({
   await syncRentCharges();
   const today = lagosToday();
   const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
-  const tenantWhere = tenantFilter ? { lease: { tenantId: tenantFilter } } : {};
+  const term = searchText(sp.q);
+  const tenantWhere: Prisma.RentChargeWhereInput = {
+    AND: [
+      tenantFilter ? { lease: { tenantId: tenantFilter } } : {},
+      wordsWhere<Prisma.RentChargeWhereInput>(term, (c) => [
+        { lease: { tenant: { OR: [{ name: c }, { email: c }, { phone: c }] } } },
+        { lease: { unit: { OR: [{ name: c }, { property: { name: c } }] } } },
+      ]),
+    ],
+  };
 
   // Lagos midnight on the 1st. Manually recorded payments are dated midnight UTC, Paystack ones carry the time.
   const monthStartInstant = new Date(monthStart.getTime() - 60 * 60 * 1000);
@@ -112,7 +123,7 @@ export default async function RentPage({
 
   const href = (patch: Record<string, string | null>) => {
     const q = new URLSearchParams();
-    for (const [k, v] of Object.entries({ status: filter, tenant: tenantFilter, ...patch })) if (v) q.set(k, v);
+    for (const [k, v] of Object.entries({ status: filter, tenant: tenantFilter, q: term, ...patch })) if (v) q.set(k, v);
     return `/admin/rent?${q}`;
   };
 
@@ -153,6 +164,7 @@ export default async function RentPage({
             </span>
           )}
         </div>
+        <SearchBox action="/admin/rent" q={term} placeholder="Search tenant, unit or property…" keep={{ status: filter, tenant: tenantFilter }} />
 
         <div className="overflow-x-auto rounded-xl border bg-white shadow-sm">
           <table className="min-w-full text-left text-sm">
@@ -210,7 +222,7 @@ export default async function RentPage({
               {shown.length === 0 && (
                 <tr>
                   <td colSpan={9} className="px-3 py-8 text-center text-slate-500">
-                    Nothing here.
+                    {term ? `Nothing matches "${term}".` : "Nothing here."}
                   </td>
                 </tr>
               )}
